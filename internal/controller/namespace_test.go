@@ -180,6 +180,11 @@ func TestDesiredNamespace(t *testing.T) {
 			t.Errorf("accepted %q", name)
 		}
 	}
+	sameNamespace := testPreview()
+	sameNamespace.Namespace = sameNamespace.Spec.Namespace
+	if _, err := desiredNamespace(sameNamespace); err == nil {
+		t.Fatal("accepted preview inside its target namespace")
+	}
 	p := testPreview()
 	p.Spec.Namespace = ""
 	name, err := desiredNamespace(p)
@@ -212,4 +217,8 @@ func (c *rejectWrites) Apply(context.Context, runtime.ApplyConfiguration, ...cli
 }
 func (rejectStatus) Apply(context.Context, runtime.ApplyConfiguration, ...client.SubResourceApplyOption) error {
 	return errors.New("unexpected status apply")
+}
+
+func (c *rejectWrites) Delete(context.Context, client.Object, ...client.DeleteOption) error {
+	return errors.New("unexpected delete")
 }

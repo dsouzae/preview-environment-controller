@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +35,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -40,6 +44,7 @@ import (
 )
 
 const (
+	cleanupFinalizer         = "platform.ellery.dev/namespace-cleanup"
 	namespaceIndex           = "preview.targetNamespace"
 	ownerUIDLabel            = "platform.ellery.dev/preview-uid"
 	ownerNameAnnotation      = "platform.ellery.dev/preview-name"
@@ -50,26 +55,37 @@ const (
 type PreviewEnvironmentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// APIReader bypasses the cache for cleanup decisions. Set by SetupWithManager.
+	APIReader client.Reader
 }
 
-// +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete
 
 func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	preview := &platformv1alpha1.PreviewEnvironment{}
 	if err := r.Get(ctx, req.NamespacedName, preview); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	// Cleanup is deliberately deferred to the finalizer milestone. Namespaces
-	// are retained when a preview is deleted; no invalid cross-scope owner ref.
 	if !preview.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		return r.reconcileDeletion(ctx, preview)
 	}
 	name, err := desiredNamespace(preview)
 	if err != nil {
 		return ctrl.Result{}, r.setStatus(ctx, preview, "", metav1.ConditionFalse, "InvalidConfiguration", err.Error())
 	}
+	// Persist cleanup responsibility before creating any external resource. If the
+	// process stops after this patch, a subsequent reconcile resumes provisioning.
+	if !controllerutil.ContainsFinalizer(preview, cleanupFinalizer) {
+		before := preview.DeepCopy()
+		controllerutil.AddFinalizer(preview, cleanupFinalizer)
+		if err := r.Patch(ctx, preview, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	namespace := &corev1.Namespace{}
 	err = r.Get(ctx, types.NamespacedName{Name: name}, namespace)
 	if apierrors.IsNotFound(err) {
@@ -97,6 +113,61 @@ func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionTrue, "NamespaceProvisioned", "Preview namespace exists; application reconciliation is not implemented yet")
 }
 
+func (r *PreviewEnvironmentReconciler) reconcileDeletion(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(preview, cleanupFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	name, err := desiredNamespace(preview)
+	if err != nil {
+		return ctrl.Result{}, r.setStatus(ctx, preview, "", metav1.ConditionFalse, "CleanupBlocked", err.Error())
+	}
+	// A stale cached NotFound must never release cleanup responsibility while the
+	// namespace still exists. Production uses the manager's uncached APIReader.
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	} // Direct clients in unit tests.
+	namespace := &corev1.Namespace{}
+	err = reader.Get(ctx, types.NamespacedName{Name: name}, namespace)
+	if apierrors.IsNotFound(err) {
+		before := preview.DeepCopy()
+		controllerutil.RemoveFinalizer(preview, cleanupFinalizer)
+		return ctrl.Result{}, r.Patch(ctx, preview, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}))
+	}
+	if err != nil {
+		return ctrl.Result{}, r.cleanupError(ctx, preview, name, err)
+	}
+	if namespace.Labels[ownerUIDLabel] != string(preview.UID) {
+		return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionFalse, "CleanupBlocked", "Namespace association does not match this preview; cleanup is blocked until ownership is resolved")
+	}
+	if err := r.setStatus(ctx, preview, name, metav1.ConditionFalse, "CleanupInProgress", "Waiting for preview namespace deletion to complete"); err != nil {
+		return ctrl.Result{}, err
+	}
+	if namespace.DeletionTimestamp.IsZero() {
+		// Protect against both replacement and metadata changes after the ownership
+		// check. A conflict returns through normal controller-runtime backoff.
+		err := r.Delete(ctx, namespace, client.Preconditions{UID: &namespace.UID, ResourceVersion: &namespace.ResourceVersion})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, r.cleanupError(ctx, preview, name, err)
+		}
+	}
+	// Namespace deletion is asynchronous; never clear its own finalizers. Watches
+	// drive progress, with a bounded retry if an event or mapping read is missed.
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+func (r *PreviewEnvironmentReconciler) cleanupError(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment, namespace string, err error) error {
+	return errors.Join(err, r.setStatus(ctx, preview, namespace, metav1.ConditionFalse, "CleanupFailed", err.Error()))
+}
+
+func previewPredicate() predicate.Predicate {
+	return predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
+		return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() ||
+			!e.ObjectOld.GetDeletionTimestamp().Equal(e.ObjectNew.GetDeletionTimestamp()) ||
+			!slices.Equal(e.ObjectOld.GetFinalizers(), e.ObjectNew.GetFinalizers())
+	}}
+}
+
 func desiredNamespace(preview *platformv1alpha1.PreviewEnvironment) (string, error) {
 	name := preview.Spec.Namespace
 	if name == "" {
@@ -104,6 +175,9 @@ func desiredNamespace(preview *platformv1alpha1.PreviewEnvironment) (string, err
 	}
 	if preview.UID == "" || !strings.HasPrefix(name, "preview-") || len(validation.IsDNS1123Label(name)) != 0 {
 		return "", fmt.Errorf("namespace must be a DNS label with the preview- prefix and the preview must have a UID")
+	}
+	if name == preview.Namespace {
+		return "", fmt.Errorf("PreviewEnvironment must live outside its target namespace to avoid blocking namespace cleanup")
 	}
 	return name, nil
 }
@@ -113,6 +187,9 @@ func (r *PreviewEnvironmentReconciler) setStatus(ctx context.Context, preview *p
 	preview.Status.ObservedGeneration = preview.Generation
 	preview.Status.Namespace = namespace
 	preview.Status.Phase = "Pending"
+	if !preview.DeletionTimestamp.IsZero() {
+		preview.Status.Phase = "Deleting"
+	}
 	if ready == metav1.ConditionTrue {
 		preview.Status.Phase = "Ready"
 	}
@@ -143,8 +220,11 @@ func (r *PreviewEnvironmentReconciler) namespaceRequests(ctx context.Context, ob
 }
 
 // SetupWithManager uses a mapped watch because a namespaced CR cannot own a
-// cluster-scoped Namespace. Generation filtering applies only to the CR watch.
+// cluster-scoped Namespace. The primary predicate includes deletion transitions.
 func (r *PreviewEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.APIReader == nil {
+		r.APIReader = mgr.GetAPIReader()
+	}
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &platformv1alpha1.PreviewEnvironment{}, namespaceIndex, func(obj client.Object) []string {
 		name, err := desiredNamespace(obj.(*platformv1alpha1.PreviewEnvironment))
 		if err != nil {
@@ -155,7 +235,7 @@ func (r *PreviewEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		return err
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&platformv1alpha1.PreviewEnvironment{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&platformv1alpha1.PreviewEnvironment{}, builder.WithPredicates(previewPredicate())).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.namespaceRequests)).
 		Named("previewenvironment").Complete(r)
 }

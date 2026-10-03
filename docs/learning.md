@@ -25,3 +25,13 @@
 
 - The workstation was upgraded to Go 1.27.1. Confirmed with `GOTOOLCHAIN=local go version`.
 - Aligned go.mod, Forgejo setup-go, Dockerfile, and devcontainer pins. Kubernetes dependencies remain at the initial scaffold versions.
+
+## Finalizer cleanup
+
+- Expected: a generation-filtered primary watch would notice deletion. Kubernetes sets deletionTimestamp in metadata without incrementing the CR generation, so that predicate can leave a finalizer stuck indefinitely.
+- Resolution: the primary watch explicitly admits generation, deletionTimestamp, and finalizer changes while filtering status-only updates. envtest verifies deletion is handled by the running manager.
+- Cleanup responsibility is persisted before namespace creation. The finalizer survives partial success and restarts, and remains until namespace deletion actually completes. Other finalizers remain intact.
+- A cached NotFound is not strong enough to prove cleanup completed. Use the manager APIReader for deletion decisions, and UID/resourceVersion delete preconditions to reject replacement or metadata changes after the ownership check. Unit tests simulate stale cache reads and a concurrent association change.
+- Cleanup waits for Kubernetes namespace finalization rather than removing namespace finalizers itself. envtest must simulate that separate controller; the manager is restarted while cleanup is pending to verify recovery.
+- Ownership conflicts intentionally block cleanup with a visible Condition. The next design step is restricting preview creation and target namespace selection through deployment/RBAC conventions, before introducing application workloads.
+- Restart testing exposed controller-runtime v0.25's process-global controller name registry: stopping a manager does not release its name. The sequential restart test disables name validation only in its manager options; production keeps the default validation.

@@ -5,6 +5,8 @@ package controller
 import (
 	"context"
 	"os"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,8 +17,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
@@ -46,30 +50,8 @@ func TestEnvtestLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme, Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := (&PreviewEnvironmentReconciler{Client: mgr.GetClient(), Scheme: scheme}).SetupWithManager(mgr); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- mgr.Start(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Error(err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Error("manager did not stop")
-		}
-	})
-	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		t.Fatal("cache did not sync")
-	}
+	ctx := context.Background()
+	stopManager := startTestManager(t, cfg, scheme)
 	control := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "preview-control"}}
 	if err := c.Create(ctx, control); err != nil {
 		t.Fatal(err)
@@ -146,9 +128,30 @@ func TestEnvtestLifecycle(t *testing.T) {
 	if err := c.Delete(ctx, current); err != nil {
 		t.Fatal(err)
 	}
+	// Deletion changes metadata, not generation. The manager must reconcile it.
+	eventually(t, func() bool {
+		fresh := &corev1.Namespace{}
+		return c.Get(ctx, nskey, fresh) == nil && !fresh.DeletionTimestamp.IsZero()
+	})
+	if err := c.Get(ctx, key, current); err != nil {
+		t.Fatal("preview removed before namespace cleanup", err)
+	}
+	if !slices.Contains(current.Finalizers, cleanupFinalizer) || current.Status.Phase != "Deleting" {
+		t.Fatal("cleanup responsibility/status missing")
+	}
+	// Restart while cleanup is pending. Initial informer events must resume it.
+	stopManager()
+	startTestManager(t, cfg, scheme)
+	if err := c.Get(ctx, nskey, ns); err != nil {
+		t.Fatal(err)
+	}
+	ns.Spec.Finalizers = nil
+	if err := c.SubResource("finalize").Update(ctx, ns); err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, func() bool { return apierrors.IsNotFound(c.Get(ctx, key, &platformv1alpha1.PreviewEnvironment{})) })
-	if err := c.Get(ctx, nskey, &corev1.Namespace{}); err != nil {
-		t.Fatal("namespace should be retained in milestone 1", err)
+	if err := c.Get(ctx, nskey, &corev1.Namespace{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("namespace not cleaned up: %v", err)
 	}
 }
 
@@ -162,4 +165,40 @@ func eventually(t *testing.T, check func() bool) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("condition did not become true before timeout")
+}
+
+func startTestManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) func() {
+	t.Helper()
+	// Test managers restart sequentially in one process. controller-runtime's
+	// name registry survives Stop, unlike a real process restart.
+	skipNameValidation := true
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Controller: config.Controller{SkipNameValidation: &skipNameValidation}, Scheme: scheme, Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&PreviewEnvironmentReconciler{Client: mgr.GetClient(), Scheme: scheme}).SetupWithManager(mgr); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- mgr.Start(ctx) }()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Error(err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Error("manager did not stop")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	if !mgr.GetCache().WaitForCacheSync(ctx) {
+		t.Fatal("cache did not sync")
+	}
+	return stop
 }

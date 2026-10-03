@@ -10,6 +10,7 @@ rules:
   - namespaces
   verbs:
   - create
+  - delete
   - get
   - list
   - watch
@@ -20,7 +21,14 @@ rules:
   verbs:
   - get
   - list
+  - patch
   - watch
+- apiGroups:
+  - platform.ellery.dev
+  resources:
+  - previewenvironments/finalizers
+  verbs:
+  - update
 - apiGroups:
   - platform.ellery.dev
   resources:
