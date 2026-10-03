@@ -20,6 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"slices"
 	"strings"
 	"time"
@@ -64,6 +67,8 @@ type PreviewEnvironmentReconciler struct {
 	ArgoProject   string
 	// Now allows deterministic expiry tests; production uses time.Now.
 	Now func() time.Time
+	// Tracer is optional; nil uses a no-op provider.
+	Tracer trace.Tracer
 }
 
 // +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments,verbs=get;list;watch;patch;delete
@@ -72,7 +77,18 @@ type PreviewEnvironmentReconciler struct {
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete
 
 func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, reconcileErr error) {
+	ctx, span := r.tracer().Start(ctx, "preview.reconcile", trace.WithAttributes(attribute.String("preview.name", req.Name), attribute.String("preview.namespace", req.Namespace)))
 	preview := &platformv1alpha1.PreviewEnvironment{}
+	defer func() {
+		span.SetAttributes(attribute.String("outcome", errorOutcome(reconcileErr)), attribute.Bool("requeue", result.RequeueAfter > 0), attribute.Int64("generation", preview.Generation), attribute.String("preview.uid", string(preview.UID)))
+		if condition := meta.FindStatusCondition(preview.Status.Conditions, "Ready"); condition != nil {
+			span.SetAttributes(attribute.String("ready", string(condition.Status)), attribute.String("ready.reason", condition.Reason))
+		}
+		if reconcileErr != nil {
+			span.SetStatus(codes.Error, errorOutcome(reconcileErr))
+		}
+		span.End()
+	}()
 	if err := r.Get(ctx, req.NamespacedName, preview); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -114,16 +130,7 @@ func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	namespace := &corev1.Namespace{}
-	err = r.Get(ctx, types.NamespacedName{Name: name}, namespace)
-	if apierrors.IsNotFound(err) {
-		namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Labels:      map[string]string{ownerUIDLabel: string(preview.UID)},
-			Annotations: map[string]string{ownerNameAnnotation: preview.Name, ownerNamespaceAnnotation: preview.Namespace},
-		}}
-		err = r.Create(ctx, namespace)
-	}
+	namespace, err := r.ensureNamespace(ctx, preview, name)
 	if err != nil {
 		statusErr := r.setStatus(ctx, preview, name, metav1.ConditionFalse, "NamespaceProvisioningFailed", err.Error())
 		if statusErr != nil {
@@ -154,7 +161,9 @@ func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionTrue, "BaselineProvisioned", "Namespace and baseline resources are provisioned")
 }
 
-func (r *PreviewEnvironmentReconciler) reconcileDeletion(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment) (ctrl.Result, error) {
+func (r *PreviewEnvironmentReconciler) reconcileDeletion(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment) (result ctrl.Result, stepErr error) {
+	ctx, finish := r.step(ctx, "cleanup")
+	defer func() { finish(stepErr) }()
 	if !controllerutil.ContainsFinalizer(preview, cleanupFinalizer) {
 		return ctrl.Result{}, nil
 	}
@@ -229,7 +238,9 @@ func desiredNamespace(preview *platformv1alpha1.PreviewEnvironment) (string, err
 	return name, nil
 }
 
-func (r *PreviewEnvironmentReconciler) setStatus(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment, namespace string, ready metav1.ConditionStatus, reason, message string, apps ...*unstructured.Unstructured) error {
+func (r *PreviewEnvironmentReconciler) setStatus(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment, namespace string, ready metav1.ConditionStatus, reason, message string, apps ...*unstructured.Unstructured) (stepErr error) {
+	ctx, finish := r.step(ctx, "status")
+	defer func() { finish(stepErr) }()
 	before := preview.DeepCopy()
 	preview.Status.ExpiresAt, _ = previewExpiry(preview)
 	// Never leave an old Healthy/Synced observation attached to a failed baseline.
@@ -334,4 +345,19 @@ func baselinePredicate() predicate.Predicate {
 		}
 		return !equality.Semantic.DeepEqual(oldObj, newObj)
 	}}
+}
+
+func (r *PreviewEnvironmentReconciler) ensureNamespace(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment, name string) (namespace *corev1.Namespace, stepErr error) {
+	ctx, finish := r.step(ctx, "namespace")
+	defer func() { finish(stepErr) }()
+	namespace = &corev1.Namespace{}
+	stepErr = r.Get(ctx, types.NamespacedName{Name: name}, namespace)
+	if apierrors.IsNotFound(stepErr) {
+		namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Labels: map[string]string{ownerUIDLabel: string(preview.UID)},
+			Annotations: map[string]string{ownerNameAnnotation: preview.Name, ownerNamespaceAnnotation: preview.Namespace},
+		}}
+		stepErr = r.Create(ctx, namespace)
+	}
+	return namespace, stepErr
 }

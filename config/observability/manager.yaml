@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preview-environment-controller-controller-manager
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9090"
+        prometheus.io/scheme: http
+    spec:
+      containers:
+      - name: manager
+        args:
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=:9090
+        - --metrics-secure=false
+        ports:
+        - containerPort: 9090
+          name: http-metrics
+        env:
+        - name: OTEL_ENABLED
+          value: "true"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector-collector.opentelemetry-operator.svc.cluster.local:4318
+        - name: OTEL_TRACES_SAMPLER
+          value: parentbased_traceidratio
+        - name: OTEL_TRACES_SAMPLER_ARG
+          value: "0.1"

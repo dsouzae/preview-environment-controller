@@ -67,7 +67,9 @@ func applicationAssociated(app *unstructured.Unstructured, p *platformv1alpha1.P
 		app.GetAnnotations()[ownerNamespaceAnnotation] == p.Namespace && len(app.GetOwnerReferences()) == 0
 }
 
-func (r *PreviewEnvironmentReconciler) reconcileApplication(ctx context.Context, p *platformv1alpha1.PreviewEnvironment, namespace string) (ctrl.Result, error) {
+func (r *PreviewEnvironmentReconciler) reconcileApplication(ctx context.Context, p *platformv1alpha1.PreviewEnvironment, namespace string) (result ctrl.Result, stepErr error) {
+	ctx, finish := r.step(ctx, "application")
+	defer func() { finish(stepErr) }()
 	if p.Spec.Revision == "" || r.ArgoNamespace == "" || r.ArgoProject == "" || r.ArgoProject == "default" {
 		return ctrl.Result{}, r.setStatus(ctx, p, namespace, metav1.ConditionFalse, "ApplicationConfigurationInvalid", "A revision and enabled Argo CD integration with a restricted AppProject are required")
 	}

@@ -36,7 +36,9 @@ func (r *PreviewEnvironmentReconciler) now() time.Time {
 	return time.Now()
 }
 
-func (r *PreviewEnvironmentReconciler) expirePreview(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment) error {
+func (r *PreviewEnvironmentReconciler) expirePreview(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment) (stepErr error) {
+	ctx, finish := r.step(ctx, "expiry")
+	defer func() { finish(stepErr) }()
 	if err := r.setStatus(ctx, preview, preview.Status.Namespace, metav1.ConditionFalse, "TTLExpired", "Preview lifetime elapsed; requesting deletion through normal finalizer cleanup"); err != nil {
 		return err
 	}

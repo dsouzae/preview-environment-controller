@@ -33,7 +33,9 @@ var (
 // The namespace is a valid cluster-scoped owner of these namespaced resources.
 // This fixed profile intentionally avoids growing the CR API before deployment
 // experience demonstrates a need for configurable budgets or access rules.
-func (r *PreviewEnvironmentReconciler) reconcileBaseline(ctx context.Context, namespace *corev1.Namespace) error {
+func (r *PreviewEnvironmentReconciler) reconcileBaseline(ctx context.Context, namespace *corev1.Namespace) (stepErr error) {
+	ctx, finish := r.step(ctx, "baseline")
+	defer func() { finish(stepErr) }()
 	for _, obj := range baselineResources(namespace.Name) {
 		err := r.reconcileBaselineResource(ctx, namespace, obj)
 		if err != nil {

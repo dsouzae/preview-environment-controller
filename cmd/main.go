@@ -17,9 +17,12 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"go.opentelemetry.io/otel"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -40,6 +43,7 @@ import (
 	platformv1alpha1 "edlab.dev/preview-environment-controller/api/v1alpha1"
 	"edlab.dev/preview-environment-controller/internal/buildinfo"
 	"edlab.dev/preview-environment-controller/internal/controller"
+	"edlab.dev/preview-environment-controller/internal/telemetry"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -197,11 +201,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	enabled, err := telemetry.Enabled()
+	if err != nil {
+		setupLog.Error(err, "Invalid tracing configuration")
+		os.Exit(1)
+	}
+	provider, shutdown, err := telemetry.Start(context.Background(), enabled, buildinfo.Version)
+	if err != nil {
+		setupLog.Error(err, "Failed to configure tracing")
+		os.Exit(1)
+	}
+	otel.SetTracerProvider(provider)
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) { setupLog.Error(err, "Failed to export telemetry") }))
+
 	if err := (&controller.PreviewEnvironmentReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		ArgoNamespace: argoNamespace,
 		ArgoProject:   argoProject,
+		Tracer:        provider.Tracer("edlab.dev/preview-environment-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "previewenvironment")
 		os.Exit(1)
@@ -218,7 +236,14 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager", "version", buildinfo.Version, "git_hash", buildinfo.GitHash)
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	managerErr := mgr.Start(ctrl.SetupSignalHandler())
+	// The manager has stopped its workers before we drain the batch queue.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := shutdown(shutdownCtx); err != nil {
+		setupLog.Error(err, "Failed to flush telemetry")
+	}
+	if err := managerErr; err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}

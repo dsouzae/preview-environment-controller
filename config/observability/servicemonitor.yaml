@@ -1,0 +1,16 @@
+# Optional: apply separately only when Prometheus Operator is installed.
+# Add deployment-specific labels required by Prometheus' serviceMonitorSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: preview-environment-controller-http-metrics
+  namespace: preview-environment-controller-system
+spec:
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: preview-environment-controller
+  endpoints:
+  - port: http-metrics
+    path: /metrics
+    scheme: http

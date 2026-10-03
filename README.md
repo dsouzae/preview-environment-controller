@@ -1,6 +1,6 @@
 # Preview Environment Controller
 
-A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. The controller provisions a namespace with resource limits, network isolation, and a workload identity, and cleans it up through a finalizer. Optional Argo CD integration manages Git-backed workload Applications and reports their health/sync status. Optional TTL expires previews through the same cleanup path. OpenTelemetry instrumentation remains planned.
+A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. The controller provisions a namespace with resource limits, network isolation, and a workload identity, and cleans it up through a finalizer. Optional Argo CD integration manages Git-backed workload Applications and reports their health/sync status. Optional TTL expires previews through the same cleanup path. Optional OpenTelemetry tracing exports reconciliation/step spans over OTLP HTTP; native controller-runtime Prometheus metrics remain available. See [telemetry configuration and smoke test](docs/telemetry.md).
 
 ## Current API
 
