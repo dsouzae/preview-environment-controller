@@ -45,3 +45,9 @@
 - NetworkPolicy namespaceSelector and podSelector in the same peer are ANDed. Use that intersection for cluster DNS; a podSelector alone selects local pods. DNS permits both UDP and TCP. Policies are additive, and creating them does not prove the CNI has enforced them. Real traffic tests remain necessary.
 - The preview workload currently needs no Kubernetes API access. A dedicated ServiceAccount with token automount disabled and no RoleBinding is the least-privilege starting point. Do not grant read access merely to demonstrate an RBAC object; add permissions when workload requirements justify them.
 - envtest lacks namespace cleanup and garbage collection. Its lifecycle test removes baseline contents before namespace finalization so a recreated namespace cannot encounter stale children from its predecessor. It verifies resource API behavior and watches, not CNI enforcement or real quota accounting.
+
+## Rendered Service name exceeded the API limit
+
+- The first cluster deployment rejected the metrics Service because the long project prefix plus Kubebuilder's controller-manager-metrics-service name exceeded 63 characters. Kustomize rendered it successfully; rendering does not validate Kubernetes resource-name constraints.
+- Shortened the base Service name to manager-metrics and updated certificate replacement references and the e2e lookup. The rendered name is preview-environment-controller-manager-metrics.
+- Next time: inspect rendered names and run a server-side dry-run before deployment, especially when choosing a long project prefix. Reapplying the corrected manifests recovers from a partially successful deployment.

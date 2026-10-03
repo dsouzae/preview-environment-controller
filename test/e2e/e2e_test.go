@@ -40,7 +40,7 @@ const namespace = "preview-environment-controller-system"
 const serviceAccountName = "preview-environment-controller-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "preview-environment-controller-controller-manager-metrics-service"
+const metricsServiceName = "preview-environment-controller-manager-metrics"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "preview-environment-controller-metrics-binding"
