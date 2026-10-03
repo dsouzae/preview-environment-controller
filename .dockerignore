@@ -1,0 +1,9 @@
+.git
+bin
+**/*_test.go
+cover.out
+coverage.out
+AGENTS.md
+docs
+.github
+.forgejo

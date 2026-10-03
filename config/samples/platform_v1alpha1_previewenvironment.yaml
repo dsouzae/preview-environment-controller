@@ -1,0 +1,7 @@
+apiVersion: platform.ellery.dev/v1alpha1
+kind: PreviewEnvironment
+metadata:
+  name: feature-123
+  namespace: default
+spec:
+  namespace: preview-feature-123

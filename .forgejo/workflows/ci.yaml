@@ -1,0 +1,20 @@
+name: Validate
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  validate:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - run: make build test vet
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l api cmd internal)"
+# Image publication and GitOps tag updates arrive in the delivery milestone.
+# envtest and lint require pinned tools provisioned on the runner first.
