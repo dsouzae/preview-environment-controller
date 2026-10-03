@@ -44,9 +44,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              PreviewEnvironmentSpec defines the desired namespace for a preview.
-              Repository and Argo CD fields will be introduced with application reconciliation.
+            description: PreviewEnvironmentSpec defines the namespace and optional
+              Git application.
             properties:
               namespace:
                 description: |-
@@ -58,14 +57,44 @@ spec:
                 x-kubernetes-validations:
                 - message: namespace is immutable
                   rule: self == oldSelf
+              path:
+                description: Path is the manifest directory within the repository;
+                  defaults to its root.
+                maxLength: 1024
+                minLength: 1
+                type: string
+              repository:
+                description: Repository is an Argo CD Git repository URL. Omit for
+                  a baseline-only preview.
+                maxLength: 2048
+                minLength: 1
+                type: string
+              revision:
+                description: Revision is a Git branch, tag or commit. A commit gives
+                  reproducible deployment.
+                maxLength: 256
+                minLength: 1
+                type: string
             type: object
             x-kubernetes-validations:
+            - message: revision is required with repository
+              rule: '!has(self.repository) || has(self.revision)'
+            - message: revision and path require repository
+              rule: has(self.repository) || (!has(self.revision) && !has(self.path))
+            - message: repository cannot be removed once configured
+              rule: '!has(oldSelf.repository) || has(self.repository)'
             - message: namespace cannot be added or removed
               rule: has(self.namespace) == has(oldSelf.namespace)
           status:
             description: PreviewEnvironmentStatus describes the last reconciliation
               result.
             properties:
+              application:
+                description: Application is the managed Application name in the configured
+                  Argo CD namespace.
+                type: string
+              applicationHealth:
+                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -132,8 +161,10 @@ spec:
                 format: int64
                 type: integer
               phase:
-                description: Ready currently means namespace and baseline provisioned,
-                  not application health.
+                description: Ready includes application sync and health when a repository
+                  is configured.
+                type: string
+              syncStatus:
                 type: string
             type: object
         required:

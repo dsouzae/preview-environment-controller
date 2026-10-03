@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -236,16 +237,22 @@ func eventually(t *testing.T, check func() bool) {
 	t.Fatal("condition did not become true before timeout")
 }
 
-func startTestManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) func() {
+func startTestManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme, argoNamespaces ...string) func() {
 	t.Helper()
 	// Test managers restart sequentially in one process. controller-runtime's
 	// name registry survives Stop, unlike a real process restart.
 	skipNameValidation := true
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Controller: config.Controller{SkipNameValidation: &skipNameValidation}, Scheme: scheme, Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
+	cacheOptions := cache.Options{}
+	argoNamespace := ""
+	if len(argoNamespaces) != 0 {
+		argoNamespace = argoNamespaces[0]
+		cacheOptions.ByObject = map[client.Object]cache.ByObject{ApplicationObject(): {Namespaces: map[string]cache.Config{argoNamespace: {}}}}
+	}
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Client: client.Options{Cache: &client.CacheOptions{Unstructured: true}}, Cache: cacheOptions, Controller: config.Controller{SkipNameValidation: &skipNameValidation}, Scheme: scheme, Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&PreviewEnvironmentReconciler{Client: mgr.GetClient(), Scheme: scheme}).SetupWithManager(mgr); err != nil {
+	if err := (&PreviewEnvironmentReconciler{Client: mgr.GetClient(), Scheme: scheme, ArgoNamespace: argoNamespace, ArgoProject: "preview-environments"}).SetupWithManager(mgr); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

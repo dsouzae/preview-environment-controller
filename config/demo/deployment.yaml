@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preview-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: preview-demo
+  template:
+    metadata:
+      labels:
+        app: preview-demo
+    spec:
+      serviceAccountName: preview-workload
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: web
+        image: nginxinc/nginx-unprivileged:1.27-alpine
+        ports:
+        - name: http
+          containerPort: 8080
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        readinessProbe:
+          httpGet: {path: /, port: http}
+        livenessProbe:
+          httpGet: {path: /, port: http}
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /var/cache/nginx
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}

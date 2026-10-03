@@ -37,7 +37,7 @@ func testClient(t *testing.T, objects ...client.Object) client.Client {
 				return nil
 			}
 			return []string{name}
-		}).WithObjects(objects...).Build()
+		}).WithIndex(&platformv1alpha1.PreviewEnvironment{}, applicationIndex, applicationIndexValues).WithObjects(objects...).Build()
 }
 
 func testPreview() *platformv1alpha1.PreviewEnvironment {

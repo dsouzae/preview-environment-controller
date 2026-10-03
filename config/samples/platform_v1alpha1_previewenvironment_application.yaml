@@ -1,0 +1,10 @@
+apiVersion: platform.ellery.dev/v1alpha1
+kind: PreviewEnvironment
+metadata:
+  name: application-smoke
+  namespace: preview-environment-controller-system
+spec:
+  namespace: preview-application-smoke
+  repository: http://forgejo-http.forgejo.svc.cluster.local:3000/edlab/preview-environment-controller.git
+  revision: main
+  path: config/demo

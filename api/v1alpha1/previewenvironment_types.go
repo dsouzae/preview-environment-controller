@@ -21,10 +21,27 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// PreviewEnvironmentSpec defines the desired namespace for a preview.
-// Repository and Argo CD fields will be introduced with application reconciliation.
+// PreviewEnvironmentSpec defines the namespace and optional Git application.
+// +kubebuilder:validation:XValidation:rule="!has(self.repository) || has(self.revision)",message="revision is required with repository"
+// +kubebuilder:validation:XValidation:rule="has(self.repository) || (!has(self.revision) && !has(self.path))",message="revision and path require repository"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.repository) || has(self.repository)",message="repository cannot be removed once configured"
 // +kubebuilder:validation:XValidation:rule="has(self.namespace) == has(oldSelf.namespace)",message="namespace cannot be added or removed"
 type PreviewEnvironmentSpec struct {
+	// Repository is an Argo CD Git repository URL. Omit for a baseline-only preview.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
+	Repository string `json:"repository,omitempty"`
+	// Revision is a Git branch, tag or commit. A commit gives reproducible deployment.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Revision string `json:"revision,omitempty"`
+	// Path is the manifest directory within the repository; defaults to its root.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Path string `json:"path,omitempty"`
 	// Namespace is immutable. If omitted, a name is derived from the CR UID.
 	// Explicit names must stay within the reserved preview- prefix.
 	// +optional
@@ -41,9 +58,16 @@ type PreviewEnvironmentStatus struct {
 	// Namespace is the computed target namespace.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
-	// Ready currently means namespace and baseline provisioned, not application health.
+	// Ready includes application sync and health when a repository is configured.
 	// +optional
 	Phase string `json:"phase,omitempty"`
+	// Application is the managed Application name in the configured Argo CD namespace.
+	// +optional
+	Application string `json:"application,omitempty"`
+	// +optional
+	SyncStatus string `json:"syncStatus,omitempty"`
+	// +optional
+	ApplicationHealth string `json:"applicationHealth,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional

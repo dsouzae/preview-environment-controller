@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: preview-environments
+  namespace: argocd
+spec:
+  description: Single-cluster preview workloads with controller-owned baselines
+  sourceRepos:
+  - http://forgejo-http.forgejo.svc.cluster.local:3000/edlab/preview-environment-controller.git
+  destinations:
+  - server: https://kubernetes.default.svc
+    namespace: preview-*
+  # No cluster-scoped resources, including Namespace or CRDs.
+  clusterResourceWhitelist: []
+  # Keep quota, networking and identity under the preview controller's ownership.
+  namespaceResourceWhitelist:
+  - group: apps
+    kind: Deployment
+  - group: ""
+    kind: Service
+  - group: ""
+    kind: ConfigMap

@@ -1,6 +1,6 @@
 # Preview Environment Controller
 
-A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. The controller provisions a namespace with resource limits, network isolation, and a workload identity, and cleans it up through a finalizer. Argo CD integration, TTL, and OpenTelemetry instrumentation are planned; they are not implemented yet.
+A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. The controller provisions a namespace with resource limits, network isolation, and a workload identity, and cleans it up through a finalizer. Optional Argo CD integration manages Git-backed workload Applications and reports their health/sync status. TTL and OpenTelemetry instrumentation remain planned.
 
 ## Current API
 
@@ -14,9 +14,9 @@ spec:
   namespace: preview-feature-123
 ```
 
-`spec.namespace` is optional and immutable, including its presence. Omit it to derive `preview-<CR UID>`; explicit names must be valid namespace names starting with `preview-`. Repository/revision fields will arrive with Argo CD integration rather than being accepted and ignored now.
+`spec.namespace` is optional and immutable, including its presence. Omit it to derive `preview-<CR UID>`; explicit names must be valid namespace names starting with `preview-`. `spec.repository` enables a Git-backed Application and requires `spec.revision`; `spec.path` defaults to `.`. These fields can change, but repository cannot be removed once configured. See [the Argo CD guide](docs/argocd.md) for configuration and the application sample.
 
-Status contains the computed namespace, phase, observedGeneration, and a Ready Condition. Ready means the associated namespace and all baseline resources are provisioned and not terminating. It does not report application health or prove network enforcement.
+Status contains the computed namespace, phase, observedGeneration, and a Ready Condition. Ready means the associated namespace and all baseline resources are provisioned and not terminating. For repository-backed previews, Ready additionally requires Argo CD to report the desired Application Synced and Healthy. It does not prove network enforcement.
 
 ## Reconciliation
 
@@ -45,11 +45,11 @@ The controller installs NetworkPolicy, LimitRange, ResourceQuota, then ServiceAc
 
 Existing resources without a matching preview association, or with another owner, produce BaselineConflict without adoption. Removing or correcting a conflict enqueues reconciliation even if its label is absent. Terminating children produce BaselineTerminating with a bounded retry; temporary API errors produce BaselineProvisioningFailed and normal controller-runtime backoff. Child create/update/delete watches repair deletion and drift. Quota status-only updates are ignored to avoid reconciliation from usage accounting. Repeated reconciliation of correct children performs no writes.
 
-Baseline creation is not atomic, and policy enforcement by a CNI is asynchronous. Do not deploy application workloads until provisioning is ready. Argo CD integration will preserve controller ownership of baseline resources rather than declaring the same objects in application manifests.
+Baseline creation is not atomic, and policy enforcement by a CNI is asynchronous. The controller creates an Application only after baseline provisioning succeeds. Application manifests must leave baseline resources under this controller's ownership; the example AppProject excludes those resource kinds.
 
 ## Deletion and finalizers
 
-A namespaced preview cannot own a cluster-scoped Namespace, so cleanup uses `platform.ellery.dev/namespace-cleanup`. The controller persists this finalizer before creating a namespace. On deletion, it sets phase Deleting / Ready=False, requests namespace deletion, and retains its finalizer until an uncached API read confirms the namespace is absent. It never removes namespace finalizers; Kubernetes must finish cleaning up namespace contents.
+A namespaced preview cannot own a cluster-scoped Namespace, so cleanup uses `platform.ellery.dev/namespace-cleanup`. The controller persists this finalizer before creating a namespace. For repository-backed previews, it first deletes the Application and waits for Argo's cascading finalizer to complete. It then sets phase Deleting / Ready=False, requests namespace deletion, and retains its finalizer until an uncached API read confirms the namespace is absent. It never removes namespace finalizers; Kubernetes must finish cleaning up namespace contents.
 
 Cleanup checks the preview UID association and deletes with both namespace UID and resourceVersion preconditions. A replaced namespace or changed metadata cannot be deleted using an earlier ownership check. Missing namespaces count as successful cleanup. Other controllers' finalizers are preserved.
 
@@ -81,7 +81,7 @@ export KUBEBUILDER_ASSETS="$(bin/setup-envtest use 1.37 --bin-dir bin -p path)"
 make test-integration
 ```
 
-Unit tests cover namespace creation, zero-write idempotency, recreation, conflicts, transient failures, and configuration errors, cleanup ownership conflicts, delete races, fresh reads, transient cleanup failures, missing namespaces, and preserved finalizers. Integration tests start a real API server and manager to test validation, status, API resourceVersion idempotency, mapped deletion watches, finalizer-driven cleanup, deletion metadata events, manager restart during cleanup, baseline owner references, child recreation, and spec drift repair. envtest has no namespace controller or garbage collector; it explicitly finalizes the namespace during deletion testing. Generated Kind e2e tests are scaffold placeholders for the later cluster test milestone.
+Argo-specific coverage includes Application creation, readiness and revision freshness, no-write idempotency, drift, mapped status/deletion watches, CRD validation and Application-before-namespace cleanup. Envtest simulates Argo status and finalizer completion using the pinned upstream CRD fixture; it does not sync Git workloads. Unit tests cover namespace creation, zero-write idempotency, recreation, conflicts, transient failures, and configuration errors, cleanup ownership conflicts, delete races, fresh reads, transient cleanup failures, missing namespaces, and preserved finalizers. Integration tests start a real API server and manager to test validation, status, API resourceVersion idempotency, mapped deletion watches, finalizer-driven cleanup, deletion metadata events, manager restart during cleanup, baseline owner references, child recreation, and spec drift repair. envtest has no namespace controller or garbage collector; it explicitly finalizes the namespace during deletion testing. Generated Kind e2e tests are scaffold placeholders for the later cluster test milestone.
 
 After dependency changes: `make tidy vendor`. After API/RBAC changes: `make generate manifests`. Generated artifacts are checked in; do not edit the CRD or DeepCopy code manually.
 
@@ -128,11 +128,11 @@ The Dockerfile builds offline from vendor and runs as UID 1000 under tini. Manag
 
 The initial Forgejo workflow checks build, unit tests, vet, and formatting. Image publication, coverage gates, lint/envtest runner provisioning, and GitOps tag updates remain delivery work. No remote or registry credentials are configured.
 
-Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/`, and `config/` layout. `PROJECT` records generator provenance. The edlab overlay and Argo CD bootstrap configuration will be added after cluster conventions are verified against the [internal playbook](https://forgejo.lab.edlab.dev/edlab/internal-k8s-project-playbook/src/branch/main/docs/NEW_PROJECT_PLAYBOOK.md).
+Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/`, and `config/` layout. `PROJECT` records generator provenance. The optional `config/overlays/argocd` enables Application reconciliation; `config/argocd` installs its restricted AppProject and namespace-scoped Application RBAC. See [docs/argocd.md](docs/argocd.md) for installation and a cluster smoke test. Controller GitOps bootstrap and automated image updates remain delivery work, following the [internal playbook](https://forgejo.lab.edlab.dev/edlab/internal-k8s-project-playbook/src/branch/main/docs/NEW_PROJECT_PLAYBOOK.md).
 
 ## Next milestones
 
-1. Argo CD Application reconciliation, AppProject restrictions, health/sync watches.
+1. Exercise Argo CD Application sync, error reporting, watches and cascading cleanup on edlab using [the application smoke test](docs/argocd.md).
 2. TTL, additional failure cases, useful metrics and OTel traces.
 3. Automated cluster smoke tests, coverage gates, offline CI tooling, container publication, and GitOps deployment.
 

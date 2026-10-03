@@ -30,6 +30,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -58,6 +59,9 @@ type PreviewEnvironmentReconciler struct {
 	Scheme *runtime.Scheme
 	// APIReader bypasses the cache for cleanup decisions. Set by SetupWithManager.
 	APIReader client.Reader
+	// Empty ArgoNamespace keeps the baseline-only controller independent of Argo CD.
+	ArgoNamespace string
+	ArgoProject   string
 }
 
 // +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments,verbs=get;list;watch;patch
@@ -121,7 +125,10 @@ func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 		return ctrl.Result{}, errors.Join(err, r.setStatus(ctx, preview, name, metav1.ConditionFalse, reason, err.Error()))
 	}
-	return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionTrue, "BaselineProvisioned", "Namespace and baseline resources are provisioned; application reconciliation is not implemented yet")
+	if preview.Spec.Repository != "" {
+		return r.reconcileApplication(ctx, preview, name)
+	}
+	return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionTrue, "BaselineProvisioned", "Namespace and baseline resources are provisioned")
 }
 
 func (r *PreviewEnvironmentReconciler) reconcileDeletion(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment) (ctrl.Result, error) {
@@ -131,6 +138,12 @@ func (r *PreviewEnvironmentReconciler) reconcileDeletion(ctx context.Context, pr
 	name, err := desiredNamespace(preview)
 	if err != nil {
 		return ctrl.Result{}, r.setStatus(ctx, preview, "", metav1.ConditionFalse, "CleanupBlocked", err.Error())
+	}
+	if preview.Spec.Repository != "" {
+		done, err := r.cleanupApplication(ctx, preview, name)
+		if err != nil || !done {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, err
+		}
 	}
 	// A stale cached NotFound must never release cleanup responsibility while the
 	// namespace still exists. Production uses the manager's uncached APIReader.
@@ -193,8 +206,17 @@ func desiredNamespace(preview *platformv1alpha1.PreviewEnvironment) (string, err
 	return name, nil
 }
 
-func (r *PreviewEnvironmentReconciler) setStatus(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment, namespace string, ready metav1.ConditionStatus, reason, message string) error {
+func (r *PreviewEnvironmentReconciler) setStatus(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment, namespace string, ready metav1.ConditionStatus, reason, message string, apps ...*unstructured.Unstructured) error {
 	before := preview.DeepCopy()
+	// Never leave an old Healthy/Synced observation attached to a failed baseline.
+	preview.Status.SyncStatus = ""
+	preview.Status.ApplicationHealth = ""
+	if len(apps) != 0 {
+		observeApplication(preview, apps[0])
+	} else {
+		meta.RemoveStatusCondition(&preview.Status.Conditions, "ApplicationCreated")
+		meta.RemoveStatusCondition(&preview.Status.Conditions, "ApplicationHealthy")
+	}
 	preview.Status.ObservedGeneration = preview.Generation
 	preview.Status.Namespace = namespace
 	preview.Status.Phase = "Pending"
@@ -253,8 +275,18 @@ func (r *PreviewEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	}); err != nil {
 		return err
 	}
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&platformv1alpha1.PreviewEnvironment{}, builder.WithPredicates(previewPredicate())).
+	b := ctrl.NewControllerManagedBy(mgr).
+		For(&platformv1alpha1.PreviewEnvironment{}, builder.WithPredicates(previewPredicate()))
+	if r.ArgoNamespace != "" {
+		if r.ArgoProject == "" || r.ArgoProject == "default" {
+			return fmt.Errorf("application integration requires a restricted, non-default AppProject")
+		}
+		if err := mgr.GetFieldIndexer().IndexField(context.Background(), &platformv1alpha1.PreviewEnvironment{}, applicationIndex, applicationIndexValues); err != nil {
+			return err
+		}
+		b = b.Watches(ApplicationObject(), handler.EnqueueRequestsFromMapFunc(r.applicationRequests), builder.WithPredicates(baselinePredicate()))
+	}
+	return b.
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.namespaceRequests)).
 		Watches(&corev1.ResourceQuota{}, handler.EnqueueRequestsFromMapFunc(r.baselineRequests), builder.WithPredicates(baselinePredicate())).
 		Watches(&corev1.LimitRange{}, handler.EnqueueRequestsFromMapFunc(r.baselineRequests), builder.WithPredicates(baselinePredicate())).
