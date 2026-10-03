@@ -1,6 +1,6 @@
 # Preview Environment Controller
 
-A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. The controller provisions a namespace with resource limits, network isolation, and a workload identity, and cleans it up through a finalizer. Optional Argo CD integration manages Git-backed workload Applications and reports their health/sync status. TTL and OpenTelemetry instrumentation remain planned.
+A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. The controller provisions a namespace with resource limits, network isolation, and a workload identity, and cleans it up through a finalizer. Optional Argo CD integration manages Git-backed workload Applications and reports their health/sync status. Optional TTL expires previews through the same cleanup path. OpenTelemetry instrumentation remains planned.
 
 ## Current API
 
@@ -15,6 +15,8 @@ spec:
 ```
 
 `spec.namespace` is optional and immutable, including its presence. Omit it to derive `preview-<CR UID>`; explicit names must be valid namespace names starting with `preview-`. `spec.repository` enables a Git-backed Application and requires `spec.revision`; `spec.path` defaults to `.`. These fields can change, but repository cannot be removed once configured. See [the Argo CD guide](docs/argocd.md) for configuration and the application sample.
+
+`spec.ttl` is optional: positive whole hours/minutes/seconds such as `24h`, `90m` or `1h30m`, within Go's duration range. Expiry is measured from `metadata.creationTimestamp`, including time spent waiting or failing; it does not start at Ready. `status.expiresAt` exposes the deadline at second precision. Editing TTL recalculates that deadline from the original creation time; shortening it into the past requests deletion immediately, and removing it disables future expiry. Once deletion has started, extending/removing TTL cannot cancel cleanup. See [TTL behavior and smoke test](docs/ttl.md).
 
 Status contains the computed namespace, phase, observedGeneration, and a Ready Condition. Ready means the associated namespace and all baseline resources are provisioned and not terminating. For repository-backed previews, Ready additionally requires Argo CD to report the desired Application Synced and Healthy. It does not prove network enforcement.
 
@@ -133,7 +135,7 @@ Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/`, and `config/` layout.
 ## Next milestones
 
 1. Exercise Argo CD Application sync, error reporting, watches and cascading cleanup on edlab using [the application smoke test](docs/argocd.md).
-2. TTL, additional failure cases, useful metrics and OTel traces.
+2. Additional failure cases, useful metrics and OTel traces.
 3. Automated cluster smoke tests, coverage gates, offline CI tooling, container publication, and GitOps deployment.
 
 Multi-cluster placement, DNS, ingress, and automatic pull-request discovery are deferred. This project has not been exercised at meaningful scale. See `docs/learning.md` for design observations.

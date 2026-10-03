@@ -27,6 +27,15 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.repository) || has(self.repository)",message="repository cannot be removed once configured"
 // +kubebuilder:validation:XValidation:rule="has(self.namespace) == has(oldSelf.namespace)",message="namespace cannot be added or removed"
 type PreviewEnvironmentSpec struct {
+	// TTL expires the preview relative to metadata.creationTimestamp, not readiness.
+	// Omit for no expiry. Positive whole hours/minutes/seconds, for example 24h or 1h30m.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:Pattern=`^([0-9]+h)?([0-9]+m)?([0-9]+s)?$`
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="ttl must be a positive duration"
+	TTL string `json:"ttl,omitempty"`
+
 	// Repository is an Argo CD Git repository URL. Omit for a baseline-only preview.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
@@ -53,6 +62,10 @@ type PreviewEnvironmentSpec struct {
 
 // PreviewEnvironmentStatus describes the last reconciliation result.
 type PreviewEnvironmentStatus struct {
+	// ExpiresAt is creationTimestamp plus TTL; absent when expiry is disabled or invalid.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// Namespace is the computed target namespace.

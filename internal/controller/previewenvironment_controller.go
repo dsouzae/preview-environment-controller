@@ -62,20 +62,43 @@ type PreviewEnvironmentReconciler struct {
 	// Empty ArgoNamespace keeps the baseline-only controller independent of Argo CD.
 	ArgoNamespace string
 	ArgoProject   string
+	// Now allows deterministic expiry tests; production uses time.Now.
+	Now func() time.Time
 }
 
-// +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments,verbs=get;list;watch;patch;delete
 // +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=platform.ellery.dev,resources=previewenvironments/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete
 
-func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, reconcileErr error) {
 	preview := &platformv1alpha1.PreviewEnvironment{}
 	if err := r.Get(ctx, req.NamespacedName, preview); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !preview.DeletionTimestamp.IsZero() {
 		return r.reconcileDeletion(ctx, preview)
+	}
+	expiresAt, err := previewExpiry(preview)
+	if err != nil {
+		return ctrl.Result{}, r.setStatus(ctx, preview, "", metav1.ConditionFalse, "InvalidTTL", err.Error())
+	}
+	if expiresAt != nil {
+		remaining := expiresAt.Sub(r.now())
+		if remaining <= 0 {
+			return ctrl.Result{}, r.expirePreview(ctx, preview)
+		}
+		// Even conflicts and pending Applications must wake at expiry. API errors
+		// retain controller-runtime backoff; the next successful attempt reschedules.
+		defer func() {
+			remaining = expiresAt.Sub(r.now())
+			if remaining <= 0 {
+				remaining = time.Nanosecond
+			}
+			if reconcileErr == nil && (result.RequeueAfter == 0 || result.RequeueAfter > remaining) {
+				result.RequeueAfter = remaining
+			}
+		}()
 	}
 	name, err := desiredNamespace(preview)
 	if err != nil {
@@ -208,6 +231,7 @@ func desiredNamespace(preview *platformv1alpha1.PreviewEnvironment) (string, err
 
 func (r *PreviewEnvironmentReconciler) setStatus(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment, namespace string, ready metav1.ConditionStatus, reason, message string, apps ...*unstructured.Unstructured) error {
 	before := preview.DeepCopy()
+	preview.Status.ExpiresAt, _ = previewExpiry(preview)
 	// Never leave an old Healthy/Synced observation attached to a failed baseline.
 	preview.Status.SyncStatus = ""
 	preview.Status.ApplicationHealth = ""
