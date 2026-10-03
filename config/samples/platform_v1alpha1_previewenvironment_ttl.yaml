@@ -1,0 +1,15 @@
+# Short-lived preview with a derived namespace name.
+#
+# Without spec.namespace the target is preview-<metadata.uid>; read the chosen
+# name from status.namespace. spec.ttl counts from metadata.creationTimestamp,
+# not from Ready, and the deadline is reported as status.expiresAt. At expiry the
+# controller deletes this object and the normal finalizer cleanup removes the
+# namespace. See docs/ttl.md.
+apiVersion: platform.ellery.dev/v1alpha1
+kind: PreviewEnvironment
+metadata:
+  name: short-lived
+  namespace: default
+spec:
+  # Whole hours, minutes and seconds in that order: 24h, 90m, 1h30m, 30s.
+  ttl: 2h

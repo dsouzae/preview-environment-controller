@@ -1,7 +1,15 @@
+# Baseline-only preview with an explicit target namespace.
+#
+# The CR may live in any namespace except its own target namespace; the smoke
+# tests keep previews in the controller's namespace
+# (preview-environment-controller-system) and treat it as the control namespace.
 apiVersion: platform.ellery.dev/v1alpha1
 kind: PreviewEnvironment
 metadata:
   name: feature-123
   namespace: default
 spec:
+  # Optional and immutable once set. Must match
+  # ^preview-[a-z0-9]([-a-z0-9]*[a-z0-9])?$ and be at most 63 characters.
+  # Omit it to let the controller derive preview-<metadata.uid>.
   namespace: preview-feature-123

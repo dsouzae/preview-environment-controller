@@ -66,21 +66,34 @@ type PreviewEnvironmentStatus struct {
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 
+	// ObservedGeneration is the metadata.generation this status was computed from.
+	// Compare it with metadata.generation before trusting Ready after a spec change.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// Namespace is the computed target namespace.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
-	// Ready includes application sync and health when a repository is configured.
+	// Phase summarizes the lifecycle: Pending while provisioning or blocked, Ready
+	// while the Ready Condition is True, Deleting once deletionTimestamp is set.
+	// Ready requires the namespace baseline and, when a repository is configured,
+	// a Synced and Healthy Application. It does not prove network enforcement.
 	// +optional
+	// +kubebuilder:validation:Enum=Pending;Ready;Deleting
 	Phase string `json:"phase,omitempty"`
 	// Application is the managed Application name in the configured Argo CD namespace.
 	// +optional
 	Application string `json:"application,omitempty"`
+	// SyncStatus mirrors the Application's status.sync.status, for example Synced or
+	// OutOfSync. Empty for baseline-only previews or while the baseline is not ready.
 	// +optional
 	SyncStatus string `json:"syncStatus,omitempty"`
+	// ApplicationHealth mirrors the Application's status.health.status, for example
+	// Healthy or Progressing. Empty for baseline-only previews or while the baseline
+	// is not ready.
 	// +optional
 	ApplicationHealth string `json:"applicationHealth,omitempty"`
+	// Conditions reports Ready and, for repository-backed previews, ApplicationCreated
+	// and ApplicationHealthy. The Ready reason names the blocking stage.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

@@ -1,6 +1,6 @@
 # Preview Environment Controller
 
-A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. The controller provisions a namespace with resource limits, network isolation, and a workload identity, and cleans it up through a finalizer. Optional Argo CD integration manages Git-backed workload Applications and reports their health/sync status. Optional TTL expires previews through the same cleanup path. Optional OpenTelemetry tracing exports reconciliation/step spans over OTLP HTTP; native controller-runtime Prometheus metrics remain available. See [telemetry configuration and smoke test](docs/telemetry.md).
+A Go/Kubebuilder learning project for managing ephemeral application environments on edlab. Each `PreviewEnvironment` gets its own namespace with resource limits, network isolation and a workload identity, and is cleaned up through a finalizer. Optional Argo CD integration deploys a Git-backed Application into that namespace and reports its sync and health. Optional TTL expires previews through the same cleanup path. Optional OpenTelemetry tracing exports reconciliation spans over OTLP/HTTP; controller-runtime's Prometheus metrics remain available.
 
 ## Current API
 
@@ -9,72 +9,54 @@ apiVersion: platform.ellery.dev/v1alpha1
 kind: PreviewEnvironment
 metadata:
   name: feature-123
-  namespace: default
+  namespace: default          # any namespace except the target namespace
 spec:
-  namespace: preview-feature-123
+  namespace: preview-feature-123   # optional, immutable; default preview-<CR UID>
+  # repository: https://…/repo.git # optional; enables an Argo CD Application
+  # revision: main                 # required with repository
+  # path: config/demo              # defaults to "."
+  # ttl: 24h                       # optional; measured from creationTimestamp
 ```
 
-`spec.namespace` is optional and immutable, including its presence. Omit it to derive `preview-<CR UID>`; explicit names must be valid namespace names starting with `preview-`. `spec.repository` enables a Git-backed Application and requires `spec.revision`; `spec.path` defaults to `.`. These fields can change, but repository cannot be removed once configured. See [the Argo CD guide](docs/argocd.md) for configuration and the application sample.
+`spec.namespace` is optional and immutable, including its presence. Omit it to derive `preview-<CR UID>`; explicit names must be valid namespace names starting with `preview-`. Keep the CR in a control namespace, never inside its own target.
 
-`spec.ttl` is optional: positive whole hours/minutes/seconds such as `24h`, `90m` or `1h30m`, within Go's duration range. Expiry is measured from `metadata.creationTimestamp`, including time spent waiting or failing; it does not start at Ready. `status.expiresAt` exposes the deadline at second precision. Editing TTL recalculates that deadline from the original creation time; shortening it into the past requests deletion immediately, and removing it disables future expiry. Once deletion has started, extending/removing TTL cannot cancel cleanup. See [TTL behavior and smoke test](docs/ttl.md).
+`spec.repository` enables a Git-backed Application and requires `spec.revision`; `spec.path` defaults to `.`. These fields can change, but repository cannot be removed once configured. See [docs/argocd.md](docs/argocd.md).
 
-Status contains the computed namespace, phase, observedGeneration, and a Ready Condition. Ready means the associated namespace and all baseline resources are provisioned and not terminating. For repository-backed previews, Ready additionally requires Argo CD to report the desired Application Synced and Healthy. It does not prove network enforcement.
+`spec.ttl` is optional: positive whole hours/minutes/seconds such as `24h`, `90m` or `1h30m`. Expiry is measured from `metadata.creationTimestamp`, including time spent waiting or failing; it does not start at Ready. `status.expiresAt` exposes the deadline. Editing TTL recalculates it from the original creation time; shortening it into the past requests deletion immediately, removing it disables expiry, and once deletion has started a TTL edit cannot cancel cleanup. See [docs/ttl.md](docs/ttl.md).
 
-## Reconciliation
+Status reports the computed namespace, a phase (`Pending`, `Ready`, `Deleting`), `observedGeneration`, Conditions and, for repository-backed previews, the Application name, sync status and health. Ready means the namespace and all baseline resources are provisioned and, when a repository is configured, that Argo CD reports the desired Application Synced and Healthy. It does not prove network enforcement. Every phase, Condition and reason is listed in [docs/conditions.md](docs/conditions.md).
 
-The controller reads the preview and computes its target name on each reconcile. It creates a missing Namespace with a UID association label and informational annotations. Existing associated namespaces are left unchanged. Unrelated namespaces produce NamespaceConflict without adoption or mutation. Removing a conflict triggers another reconcile through a target-name index.
+Samples: [baseline](config/samples/platform_v1alpha1_previewenvironment.yaml), [derived name with TTL](config/samples/platform_v1alpha1_previewenvironment_ttl.yaml), [Argo CD application](config/samples/platform_v1alpha1_previewenvironment_application.yaml).
 
-Namespace API errors produce NamespaceProvisioningFailed and return an error for controller-runtime backoff. Invalid configuration produces InvalidConfiguration without a timed retry. Terminating namespaces produce NamespaceTerminating and a five-second retry. There is no steady-state polling.
+## Documentation
 
-Primary creation/spec, deletion-timestamp, and finalizer events and namespace create/update/delete events enqueue reconciliation. The primary watch filters status-only updates; equal status is not patched. Reads use the manager cache, so stale NotFound / AlreadyExists and optimistic status conflicts are retried through the normal work queue.
-
-## Namespace baseline
-
-Each preview gets these reserved resources:
-
-| Resource | Name | Defaults |
-|---|---|---|
-| ResourceQuota | preview-baseline | Requests: 2 CPU / 2Gi memory; limits: 4 CPU / 4Gi memory; 10 pods, 5 services, 20 ConfigMaps, 20 Secrets; zero PVCs, LoadBalancer and NodePort services |
-| LimitRange | preview-baseline | Container requests: 100m CPU / 128Mi; limits: 500m / 256Mi; min: 10m / 16Mi; max: 1 CPU / 1Gi |
-| NetworkPolicy | preview-baseline | All pods isolated for ingress and egress, allowing same-namespace pod traffic and DNS to kube-system pods labeled k8s-app=kube-dns on UDP/TCP 53 |
-| ServiceAccount | preview-workload | Token automount disabled; no workload Role or RoleBinding grants |
-
-Workloads must set `spec.serviceAccountName: preview-workload`. The controller leaves the default ServiceAccount alone; a Pod can override automount behavior, so this is a safe default rather than an admission-enforced security boundary. Workload Kubernetes API access is deliberately not granted until a concrete requirement exists. Controller RBAC adds only get/list/watch/create/patch for these four resource kinds.
-
-The profile is fixed for this milestone. Quotas cap declared resources rather than measuring runtime consumption. Stateful workloads, public ingress, external API calls, and cross-namespace monitoring are outside the initial profile. Verify cluster DNS labels and whether NodeLocal DNS is used before deployment; a node-local resolver needs a different egress design. Same-namespace traffic is allowed; other pod ingress/egress is denied unless another policy allows it. NetworkPolicies combine additively and do not provide strict tenant isolation from node traffic or privileged workloads. See the upstream [NetworkPolicy semantics](https://kubernetes.io/docs/concepts/services-networking/network-policies/) and [ServiceAccount configuration](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/).
-
-The controller installs NetworkPolicy, LimitRange, ResourceQuota, then ServiceAccount, and sets Ready only after all succeed. Partial creation survives errors and restarts. Optimistic patches change only the reserved policy specs, preview association label, namespace owner reference, and ServiceAccount token-automount field. Unmanaged annotations/labels and ServiceAccount imagePullSecrets are preserved. These children use valid Namespace owner references with blockOwnerDeletion disabled. Finalizer cleanup still handles the cross-scope preview-to-namespace relationship.
-
-Existing resources without a matching preview association, or with another owner, produce BaselineConflict without adoption. Removing or correcting a conflict enqueues reconciliation even if its label is absent. Terminating children produce BaselineTerminating with a bounded retry; temporary API errors produce BaselineProvisioningFailed and normal controller-runtime backoff. Child create/update/delete watches repair deletion and drift. Quota status-only updates are ignored to avoid reconciliation from usage accounting. Repeated reconciliation of correct children performs no writes.
-
-Baseline creation is not atomic, and policy enforcement by a CNI is asynchronous. The controller creates an Application only after baseline provisioning succeeds. Application manifests must leave baseline resources under this controller's ownership; the example AppProject excludes those resource kinds.
-
-## Deletion and finalizers
-
-A namespaced preview cannot own a cluster-scoped Namespace, so cleanup uses `platform.ellery.dev/namespace-cleanup`. The controller persists this finalizer before creating a namespace. For repository-backed previews, it first deletes the Application and waits for Argo's cascading finalizer to complete. It then sets phase Deleting / Ready=False, requests namespace deletion, and retains its finalizer until an uncached API read confirms the namespace is absent. It never removes namespace finalizers; Kubernetes must finish cleaning up namespace contents.
-
-Cleanup checks the preview UID association and deletes with both namespace UID and resourceVersion preconditions. A replaced namespace or changed metadata cannot be deleted using an earlier ownership check. Missing namespaces count as successful cleanup. Other controllers' finalizers are preserved.
-
-Temporary read/delete errors produce CleanupFailed and normal error backoff. An ownership mismatch produces CleanupBlocked and retains the finalizer until the namespace association is resolved or the namespace is removed. Namespace events trigger recovery, with five-second retries while deletion is in progress. CleanupInProgress is idempotent: repeated waiting reconciles do not patch equal status or repeat deletion requests. A controller restart resumes from persisted finalizers and namespace state.
-
-Editing association labels makes the namespace a conflict rather than authorizing takeover. These labels are association metadata, not an authorization boundary: limit RBAC access to previews and namespace metadata. Other namespace metadata is outside this milestone's managed state. A preview placed inside its own target namespace is rejected to avoid a deletion deadlock; keep preview CRs in a separate control namespace. Deployments should restrict who can create CRs and choose target names.
-
-For an existing milestone-1 preview, let the upgraded controller reconcile and persist its finalizer before deleting it. Previews already deleted without a finalizer have no surviving resource to drive cleanup. Removing the preview finalizer by hand bypasses cleanup and can leak resources.
+| Document | Contents |
+|---|---|
+| [docs/design.md](docs/design.md) | How reconciliation works: lifecycle, ownership and association, baseline, Application, TTL, finalizer cleanup, watches, status writes, security boundaries |
+| [docs/conditions.md](docs/conditions.md) | Every phase, Condition and Ready reason with retry behaviour and what to do |
+| [docs/operations.md](docs/operations.md) | Running locally, deployment overlays and flags, RBAC, diagnosing a preview, upgrade notes |
+| [docs/testing.md](docs/testing.md) | Unit, envtest and cluster test layers, what each proves, helper patterns |
+| [docs/smoke-test.md](docs/smoke-test.md) | Seven-step manual cluster smoke test (passed on edlab 2026-10-03) |
+| [docs/argocd.md](docs/argocd.md) | Argo CD Application contract, installation and smoke test |
+| [docs/ttl.md](docs/ttl.md) | Preview lifetime behaviour and smoke test |
+| [docs/telemetry.md](docs/telemetry.md) | Tracing and metrics configuration, edlab observability overlay |
+| [docs/learning.md](docs/learning.md) | Design journal: expectations, observations, decisions, cluster evidence |
+| [CHANGELOG.md](CHANGELOG.md) | Milestone history and upgrade notes |
 
 ## Build and tests
 
 Current pinned stack: Kubebuilder 4.16.0, Go 1.27.1, controller-runtime 0.25.0, Kubernetes libraries 0.37.0. The project was scaffolded on Go 1.26.3 and upgraded to Go 1.27.1; these pins are not a claim of compatibility with the current edlab cluster; verify its server version before deployment.
 
-Dependencies are committed under `vendor/`. Application builds/tests use `-mod=vendor`. Go may download the pinned toolchain on first use if the workstation is older.
+Dependencies are committed under `vendor/`. Builds and tests use `-mod=vendor`. Go may download the pinned toolchain on first use if the workstation is older.
 
 ```sh
 make build
-make test
+make test          # unit tests, no cluster
 make vet
 make lint
 ```
 
-Generators/lint/envtest setup download pinned tooling; provision these ahead of time for a runner without Go proxy egress:
+Generators, lint and envtest download pinned tooling; provision these ahead of time for a runner without Go proxy egress:
 
 ```sh
 make generate manifests
@@ -83,59 +65,32 @@ export KUBEBUILDER_ASSETS="$(bin/setup-envtest use 1.37 --bin-dir bin -p path)"
 make test-integration
 ```
 
-Argo-specific coverage includes Application creation, readiness and revision freshness, no-write idempotency, drift, mapped status/deletion watches, CRD validation and Application-before-namespace cleanup. Envtest simulates Argo status and finalizer completion using the pinned upstream CRD fixture; it does not sync Git workloads. Unit tests cover namespace creation, zero-write idempotency, recreation, conflicts, transient failures, and configuration errors, cleanup ownership conflicts, delete races, fresh reads, transient cleanup failures, missing namespaces, and preserved finalizers. Integration tests start a real API server and manager to test validation, status, API resourceVersion idempotency, mapped deletion watches, finalizer-driven cleanup, deletion metadata events, manager restart during cleanup, baseline owner references, child recreation, and spec drift repair. envtest has no namespace controller or garbage collector; it explicitly finalizes the namespace during deletion testing. Generated Kind e2e tests are scaffold placeholders for the later cluster test milestone.
+After dependency changes: `make tidy vendor`. After API or RBAC marker changes: `make generate manifests`. Generated artifacts are checked in; do not edit the CRD, RBAC or DeepCopy code manually. What each test layer covers and where envtest stops is in [docs/testing.md](docs/testing.md).
 
-After dependency changes: `make tidy vendor`. After API/RBAC changes: `make generate manifests`. Generated artifacts are checked in; do not edit the CRD or DeepCopy code manually.
+## Deployment
 
-## Local manual exercise
+| Kustomization | Use |
+|---|---|
+| `config/default` | Baseline-only controller; authenticated HTTPS metrics on `:8443`, probes on `:8081`, leader election (`make deploy IMG=…`) |
+| `config/overlays/argocd` | Adds `--argo-namespace=argocd --argo-project=preview-environments` |
+| `config/observability` | Plaintext HTTP metrics on `:9090` with scrape annotations, OTLP tracing enabled |
+| `config/overlays/argocd-observability` | Both |
+| `config/argocd` | Restricted AppProject and namespace-scoped Application RBAC; apply separately with any Argo-enabled overlay |
 
-These commands change the selected cluster. Use a disposable development cluster and check `kubectl config current-context` first.
+The Dockerfile builds offline from `vendor/` and runs as UID 1000 under tini; manager manifests use a read-only root filesystem, dropped capabilities, no privilege escalation and leader election. The Forgejo workflow checks build, unit tests, vet and formatting. Image publication, coverage gates, lint/envtest runner provisioning and GitOps tag updates remain delivery work; no remote or registry credentials are configured. Procedures are in [docs/operations.md](docs/operations.md), [docs/smoke-test.md](docs/smoke-test.md), [docs/argocd.md](docs/argocd.md) and [docs/telemetry.md](docs/telemetry.md).
 
-```sh
-make install
-make run
-# In another terminal:
-kubectl apply -f config/samples/platform_v1alpha1_previewenvironment.yaml
-kubectl get previewenvironment feature-123 -o yaml
-kubectl get namespace preview-feature-123
-kubectl delete namespace preview-feature-123
-# Wait for deletion, then confirm a new namespace UID appears.
-kubectl get namespace preview-feature-123 -o jsonpath='{.metadata.uid}'
-```
+Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/` and `config/` layout; `PROJECT` records generator provenance. Controller GitOps bootstrap and automated image updates will follow the [internal playbook](https://forgejo.lab.edlab.dev/edlab/internal-k8s-project-playbook/src/branch/main/docs/NEW_PROJECT_PLAYBOOK.md).
 
-With the controller still running, delete the preview and wait for namespace cleanup:
+## Status and next milestones
 
-```sh
-kubectl delete previewenvironment feature-123 --wait=false
-kubectl get previewenvironment feature-123 -o yaml
-kubectl wait --for=delete namespace/preview-feature-123 --timeout=120s
-kubectl wait --for=delete previewenvironment/feature-123 --timeout=120s
-```
-
-If cleanup is stuck, inspect the preview Conditions and namespace Conditions/finalizers. No live cluster is required for unit tests or envtest. envtest tests API/controller behavior; it has no CNI, kubelet, quota-accounting controller, or namespace controller. It explicitly removes namespace contents and finalizes deletion in the lifecycle test. It does not verify packet filtering, real quota admission accounting, or garbage collection.
-
-Before adding an application, use a dedicated cluster test to confirm:
-
-- A pod in the preview can reach another pod in the same preview and resolve DNS.
-- A pod in another namespace cannot reach the preview app port, and the preview cannot reach another namespace's app port.
-- Requests/limits are defaulted and over-budget workloads are rejected after quota accounting settles.
-- Pods using preview-workload have no automounted API token and receive no application RBAC grants.
-- Real namespace deletion removes all children without manually clearing namespace finalizers.
-
-The complete command sequence is in [docs/smoke-test.md](docs/smoke-test.md). The user reported that all seven manual edlab smoke-test steps passed on 2026-10-03, including networking, resource defaults, token/RBAC checks, quota enforcement, drift repair, and cleanup. See `docs/learning.md` for the evidence and concurrency observations. The generated Kind e2e suite remains a scaffold; these manual results are not automated cluster coverage.
-
-## Packaging and delivery
-
-The Dockerfile builds offline from vendor and runs as UID 1000 under tini. Manager manifests use a read-only root filesystem, dropped capabilities, no privilege escalation, and leader election. Health probes use :8081; default authenticated HTTPS metrics use :8443 when deployed. The edlab plaintext Prometheus/OTLP conventions will be configured explicitly during observability work.
-
-The initial Forgejo workflow checks build, unit tests, vet, and formatting. Image publication, coverage gates, lint/envtest runner provisioning, and GitOps tag updates remain delivery work. No remote or registry credentials are configured.
-
-Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/`, and `config/` layout. `PROJECT` records generator provenance. The optional `config/overlays/argocd` enables Application reconciliation; `config/argocd` installs its restricted AppProject and namespace-scoped Application RBAC. See [docs/argocd.md](docs/argocd.md) for installation and a cluster smoke test. Controller GitOps bootstrap and automated image updates remain delivery work, following the [internal playbook](https://forgejo.lab.edlab.dev/edlab/internal-k8s-project-playbook/src/branch/main/docs/NEW_PROJECT_PLAYBOOK.md).
-
-## Next milestones
+The baseline smoke test passed on edlab on 2026-10-03 with image `790e0e6`. The Argo CD, TTL and telemetry smoke tests have not yet been run on a cluster, and the Kind e2e suite is a scaffold placeholder.
 
 1. Exercise Argo CD Application sync, error reporting, watches and cascading cleanup on edlab using [the application smoke test](docs/argocd.md).
 2. Additional failure cases, useful metrics and OTel traces.
-3. Automated cluster smoke tests, coverage gates, offline CI tooling, container publication, and GitOps deployment.
+3. Automated cluster smoke tests, coverage gates, offline CI tooling, container publication and GitOps deployment.
 
-Multi-cluster placement, DNS, ingress, and automatic pull-request discovery are deferred. This project has not been exercised at meaningful scale. See `docs/learning.md` for design observations.
+Multi-cluster placement, DNS, ingress and automatic pull-request discovery are deferred. This project has not been exercised at meaningful scale.
+
+## License
+
+Apache License 2.0; see [LICENSE](LICENSE). The envtest fixture `test/fixtures/argocd/application-crd.yaml` is copied unchanged from Argo CD v3.3.0, also Apache-2.0.

@@ -105,8 +105,15 @@ spec:
                   Argo CD namespace.
                 type: string
               applicationHealth:
+                description: |-
+                  ApplicationHealth mirrors the Application's status.health.status, for example
+                  Healthy or Progressing. Empty for baseline-only previews or while the baseline
+                  is not ready.
                 type: string
               conditions:
+                description: |-
+                  Conditions reports Ready and, for repository-backed previews, ApplicationCreated
+                  and ApplicationHealthy. The Ready reason names the blocking stage.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -174,13 +181,26 @@ spec:
                 description: Namespace is the computed target namespace.
                 type: string
               observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed from.
+                  Compare it with metadata.generation before trusting Ready after a spec change.
                 format: int64
                 type: integer
               phase:
-                description: Ready includes application sync and health when a repository
-                  is configured.
+                description: |-
+                  Phase summarizes the lifecycle: Pending while provisioning or blocked, Ready
+                  while the Ready Condition is True, Deleting once deletionTimestamp is set.
+                  Ready requires the namespace baseline and, when a repository is configured,
+                  a Synced and Healthy Application. It does not prove network enforcement.
+                enum:
+                - Pending
+                - Ready
+                - Deleting
                 type: string
               syncStatus:
+                description: |-
+                  SyncStatus mirrors the Application's status.sync.status, for example Synced or
+                  OutOfSync. Empty for baseline-only previews or while the baseline is not ready.
                 type: string
             type: object
         required:

@@ -1,5 +1,40 @@
 # preview-environment-controller - AI Agent Guide
 
+## This project
+
+`PreviewEnvironment` (`platform.ellery.dev/v1alpha1`, namespaced) provisions an isolated `preview-*` namespace with a fixed baseline (ResourceQuota, LimitRange, NetworkPolicy, ServiceAccount), optionally an Argo CD `Application` that deploys a Git path into it, optionally a TTL, and tears everything down through a finalizer. Read `docs/design.md` before changing reconciliation and `docs/conditions.md` before adding or renaming a status reason. `docs/learning.md` is the author's journal of expectations versus observations; add an entry per milestone, do not rewrite old ones.
+
+### Where the code lives
+
+- `api/v1alpha1/previewenvironment_types.go`: spec/status and CEL rules. Regenerate after edits.
+- `internal/controller/previewenvironment_controller.go`: `Reconcile`, deletion, `setStatus`, watches, predicates, indexes.
+- `internal/controller/baseline.go`: the four namespace children and their fixed specs.
+- `internal/controller/application.go`: Argo CD Application as `unstructured.Unstructured`; no Argo Go dependencies.
+- `internal/controller/ttl.go`, `internal/controller/observability.go`, `internal/telemetry/tracing.go`, `cmd/main.go` (flags, cache options, telemetry startup).
+- `config/argocd`, `config/observability`, `config/overlays/*`: hand-maintained deployment overlays. `config/demo`: sample workload for the Argo smoke test.
+- `test/fixtures/argocd/application-crd.yaml`: unchanged upstream Argo CD v3.3.0 CRD, envtest only. Do not edit.
+
+### Invariants
+
+- **Never adopt.** A Namespace, baseline child or Application whose association does not match (preview-UID label; for Applications also the name/namespace annotations and no owner references; for children also owner references pointing at this Namespace's UID) is reported as a conflict and never mutated or deleted.
+- The cleanup finalizer is added before any external resource is created and removed only after an **uncached** (`APIReader`) read confirms the namespace is gone. Cleanup order: Application, then namespace, then finalizer. Never remove Argo's or the namespace's finalizers.
+- Deletes carry UID and resourceVersion preconditions; writes are optimistic-lock merge patches; equal status is never patched; transition times are preserved.
+- Desired baseline and Application specs are recomputed every reconcile from pure functions; unrelated metadata on existing objects is preserved.
+- No steady-state polling. Progress is watch-driven; the only timers are five-second requeues while something is terminating and the TTL wake-up.
+- The primary predicate must admit generation, `deletionTimestamp` and finalizer changes (deletion does not bump generation). Secondary predicates ignore `resourceVersion`, `managedFields` and ResourceQuota status.
+- Metric labels are fixed sets (`step`, `outcome`). Preview identity goes only into trace attributes; repository URLs, revisions, raw errors and Condition messages go into neither.
+- A preview may not live in its own target namespace; `spec.namespace` is immutable; `spec.repository` cannot be removed once set.
+
+### Workflow
+
+- Builds and tests use the committed `vendor/` (`-mod=vendor`). After dependency changes: `make tidy vendor`.
+- CI runs `make build test vet` and `gofmt -l api cmd internal`. Run `make lint-fix` before committing Go changes.
+- `make test` runs unit tests (fake client, no cluster). Integration tests carry the `integration` build tag and need `KUBEBUILDER_ASSETS` (commands in the README); run `make test-integration` when touching reconciliation, watches, predicates or the CRD.
+- After editing `*_types.go` or `+kubebuilder:rbac` markers: `make manifests generate`, then commit the regenerated CRD and `config/rbac/role.yaml`.
+- A new status reason needs a row in `docs/conditions.md` and a unit test that produces it. A new milestone needs a `CHANGELOG.md` entry, a `docs/learning.md` entry and an update to the README milestone list; new RBAC or CRD changes need an upgrade note.
+- Commit messages follow the existing pattern: imperative subject, a body describing behaviour and tests, and a `Validation:` line stating what was run and what was not verified (live cluster, scale).
+- Live-cluster procedures are manual and documented in `docs/smoke-test.md`, `docs/argocd.md`, `docs/ttl.md` and `docs/telemetry.md`; do not claim cluster results that were not run.
+
 ## Project Structure
 
 **Single-group layout (default):**

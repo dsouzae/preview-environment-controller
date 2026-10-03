@@ -1,3 +1,8 @@
+# Repository-backed preview used by the Argo CD smoke test (docs/argocd.md).
+#
+# Requires a controller started with --argo-namespace and a restricted
+# --argo-project (config/overlays/argocd), the AppProject and Role from
+# config/argocd, and an Argo CD installation that can read the repository.
 apiVersion: platform.ellery.dev/v1alpha1
 kind: PreviewEnvironment
 metadata:
@@ -5,6 +10,10 @@ metadata:
   namespace: preview-environment-controller-system
 spec:
   namespace: preview-application-smoke
+  # repository requires revision and cannot be removed once configured;
+  # revision and path may change later. path defaults to "." when omitted.
+  # The manifests must omit explicit namespaces and must not declare the
+  # controller-owned baseline resources.
   repository: http://forgejo-http.forgejo.svc.cluster.local:3000/edlab/preview-environment-controller.git
   revision: main
   path: config/demo
