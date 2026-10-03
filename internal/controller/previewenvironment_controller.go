@@ -25,6 +25,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -110,7 +111,17 @@ func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if !namespace.DeletionTimestamp.IsZero() {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.setStatus(ctx, preview, name, metav1.ConditionFalse, "NamespaceTerminating", "Waiting for namespace deletion before recreating it")
 	}
-	return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionTrue, "NamespaceProvisioned", "Preview namespace exists; application reconciliation is not implemented yet")
+	if err := r.reconcileBaseline(ctx, namespace); err != nil {
+		reason := "BaselineProvisioningFailed"
+		if errors.Is(err, errBaselineTerminating) {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.setStatus(ctx, preview, name, metav1.ConditionFalse, "BaselineTerminating", err.Error())
+		}
+		if errors.Is(err, errBaselineConflict) {
+			return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionFalse, "BaselineConflict", err.Error())
+		}
+		return ctrl.Result{}, errors.Join(err, r.setStatus(ctx, preview, name, metav1.ConditionFalse, reason, err.Error()))
+	}
+	return ctrl.Result{}, r.setStatus(ctx, preview, name, metav1.ConditionTrue, "BaselineProvisioned", "Namespace and baseline resources are provisioned; application reconciliation is not implemented yet")
 }
 
 func (r *PreviewEnvironmentReconciler) reconcileDeletion(ctx context.Context, preview *platformv1alpha1.PreviewEnvironment) (ctrl.Result, error) {
@@ -205,10 +216,18 @@ func (r *PreviewEnvironmentReconciler) setStatus(ctx context.Context, preview *p
 }
 
 func (r *PreviewEnvironmentReconciler) namespaceRequests(ctx context.Context, obj client.Object) []ctrl.Request {
+	return r.requestsForNamespace(ctx, obj.GetName())
+}
+
+func (r *PreviewEnvironmentReconciler) baselineRequests(ctx context.Context, obj client.Object) []ctrl.Request {
+	return r.requestsForNamespace(ctx, obj.GetNamespace())
+}
+
+func (r *PreviewEnvironmentReconciler) requestsForNamespace(ctx context.Context, namespace string) []ctrl.Request {
 	// Indexing by desired name also finds conflicting namespaces with no association
 	// annotations, so removing a conflict triggers recovery without polling.
 	previews := &platformv1alpha1.PreviewEnvironmentList{}
-	if err := r.List(ctx, previews, client.MatchingFields{namespaceIndex: obj.GetName()}); err != nil {
+	if err := r.List(ctx, previews, client.MatchingFields{namespaceIndex: namespace}); err != nil {
 		ctrl.LoggerFrom(ctx).Error(err, "Unable to map namespace event")
 		return nil
 	}
@@ -237,5 +256,26 @@ func (r *PreviewEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&platformv1alpha1.PreviewEnvironment{}, builder.WithPredicates(previewPredicate())).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.namespaceRequests)).
+		Watches(&corev1.ResourceQuota{}, handler.EnqueueRequestsFromMapFunc(r.baselineRequests), builder.WithPredicates(baselinePredicate())).
+		Watches(&corev1.LimitRange{}, handler.EnqueueRequestsFromMapFunc(r.baselineRequests), builder.WithPredicates(baselinePredicate())).
+		Watches(&networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(r.baselineRequests), builder.WithPredicates(baselinePredicate())).
+		Watches(&corev1.ServiceAccount{}, handler.EnqueueRequestsFromMapFunc(r.baselineRequests), builder.WithPredicates(baselinePredicate())).
 		Named("previewenvironment").Complete(r)
+}
+
+func baselinePredicate() predicate.Predicate {
+	return predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
+		oldObj, newObj := e.ObjectOld.DeepCopyObject().(client.Object), e.ObjectNew.DeepCopyObject().(client.Object)
+		oldObj.SetResourceVersion("")
+		newObj.SetResourceVersion("")
+		oldObj.SetManagedFields(nil)
+		newObj.SetManagedFields(nil)
+		if quota, ok := oldObj.(*corev1.ResourceQuota); ok {
+			quota.Status = corev1.ResourceQuotaStatus{}
+		}
+		if quota, ok := newObj.(*corev1.ResourceQuota); ok {
+			quota.Status = corev1.ResourceQuotaStatus{}
+		}
+		return !equality.Semantic.DeepEqual(oldObj, newObj)
+	}}
 }

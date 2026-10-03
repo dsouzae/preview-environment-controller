@@ -132,8 +132,8 @@ spec:
                 format: int64
                 type: integer
               phase:
-                description: Ready currently means namespace provisioned, not application
-                  health.
+                description: Ready currently means namespace and baseline provisioned,
+                  not application health.
                 type: string
             type: object
         required:

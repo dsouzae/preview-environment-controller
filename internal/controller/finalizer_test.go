@@ -56,7 +56,7 @@ func TestFinalizerPersistedBeforeProvisioning(t *testing.T) {
 	if err := reconcile(t, r, p); err != nil {
 		t.Fatal(err)
 	}
-	if reason := readyReason(t, c, p); reason != "NamespaceProvisioned" {
+	if reason := readyReason(t, c, p); reason != "BaselineProvisioned" {
 		t.Fatal(reason)
 	}
 }

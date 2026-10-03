@@ -4,6 +4,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"slices"
 	"sync"
@@ -12,8 +13,11 @@ import (
 
 	platformv1alpha1 "edlab.dev/preview-environment-controller/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,6 +50,9 @@ func TestEnvtestLifecycle(t *testing.T) {
 	if err := platformv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	if err := networkingv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
 	c, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +81,17 @@ func TestEnvtestLifecycle(t *testing.T) {
 	if err := c.Get(ctx, nskey, ns); err != nil {
 		t.Fatal(err)
 	}
+	baselineVersions := map[string]string{}
+	for _, obj := range baselineResources(ns.Name) {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			t.Fatal(err)
+		}
+		owners := obj.GetOwnerReferences()
+		if len(owners) != 1 || owners[0].UID != ns.UID || owners[0].Kind != "Namespace" {
+			t.Fatal("incorrect baseline owner", owners)
+		}
+		baselineVersions[fmt.Sprintf("%T", obj)] = obj.GetResourceVersion()
+	}
 	originalUID := ns.UID
 	// Direct repeated reconciliation verifies actual API resourceVersions stay stable.
 	current := &platformv1alpha1.PreviewEnvironment{}
@@ -97,6 +115,55 @@ func TestEnvtestLifecycle(t *testing.T) {
 	if current.ResourceVersion != rv || ns.ResourceVersion != nsrv {
 		t.Fatal("repeated reconciliation wrote resources")
 	}
+	for _, obj := range baselineResources(ns.Name) {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			t.Fatal(err)
+		}
+		if obj.GetResourceVersion() != baselineVersions[fmt.Sprintf("%T", obj)] {
+			t.Fatalf("repeated reconcile wrote %T", obj)
+		}
+	}
+	// Exercise mapped child watches using real API events, with no explicit reconcile.
+	for _, obj := range baselineResources(ns.Name) {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			t.Fatal(err)
+		}
+		oldUID := obj.GetUID()
+		if err := c.Delete(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool { return c.Get(ctx, client.ObjectKeyFromObject(obj), obj) == nil && obj.GetUID() != oldUID })
+		switch typed := obj.(type) {
+		case *corev1.ResourceQuota:
+			typed.Spec.Hard[corev1.ResourcePods] = resource.MustParse("100")
+		case *corev1.LimitRange:
+			typed.Spec.Limits[0].Default[corev1.ResourceCPU] = resource.MustParse("600m")
+		case *networkingv1.NetworkPolicy:
+			typed.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{}}
+		case *corev1.ServiceAccount:
+			enabled := true
+			typed.AutomountServiceAccountToken = &enabled
+		}
+		if err := c.Update(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool {
+			if c.Get(ctx, client.ObjectKeyFromObject(obj), obj) != nil {
+				return false
+			}
+			switch typed := obj.(type) {
+			case *corev1.ResourceQuota:
+				return equality.Semantic.DeepEqual(typed.Spec, quotaSpec())
+			case *corev1.LimitRange:
+				return equality.Semantic.DeepEqual(typed.Spec, limitRangeSpec())
+			case *networkingv1.NetworkPolicy:
+				return equality.Semantic.DeepEqual(typed.Spec, networkPolicySpec())
+			case *corev1.ServiceAccount:
+				return typed.AutomountServiceAccountToken != nil && !*typed.AutomountServiceAccountToken
+			}
+			return false
+		})
+	}
 	// CEL validation prevents moving the namespace and leaking the old one.
 	current.Spec.Namespace = "preview-other"
 	if err := c.Update(ctx, current); !apierrors.IsInvalid(err) {
@@ -114,6 +181,7 @@ func TestEnvtestLifecycle(t *testing.T) {
 	if err := c.Get(ctx, nskey, ns); err != nil {
 		t.Fatal(err)
 	}
+	deleteNamespaceContents(t, c, ns.Name)
 	ns.Spec.Finalizers = nil
 	if err := c.SubResource("finalize").Update(ctx, ns); err != nil {
 		t.Fatal(err)
@@ -145,6 +213,7 @@ func TestEnvtestLifecycle(t *testing.T) {
 	if err := c.Get(ctx, nskey, ns); err != nil {
 		t.Fatal(err)
 	}
+	deleteNamespaceContents(t, c, ns.Name)
 	ns.Spec.Finalizers = nil
 	if err := c.SubResource("finalize").Update(ctx, ns); err != nil {
 		t.Fatal(err)
@@ -201,4 +270,15 @@ func startTestManager(t *testing.T, cfg *rest.Config, scheme *runtime.Scheme) fu
 		t.Fatal("cache did not sync")
 	}
 	return stop
+}
+
+// envtest has no namespace controller or GC. Simulate namespace content removal
+// before finalizing it; this does not test Kubernetes garbage collection itself.
+func deleteNamespaceContents(t *testing.T, c client.Client, namespace string) {
+	t.Helper()
+	for _, obj := range baselineResources(namespace) {
+		if err := c.DeleteAllOf(context.Background(), obj, client.InNamespace(namespace)); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

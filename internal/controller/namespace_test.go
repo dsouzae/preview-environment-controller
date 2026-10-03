@@ -7,6 +7,7 @@ import (
 
 	platformv1alpha1 "edlab.dev/preview-environment-controller/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -23,6 +24,9 @@ func testClient(t *testing.T, objects ...client.Object) client.Client {
 		t.Fatal(err)
 	}
 	if err := platformv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := networkingv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).
@@ -78,7 +82,7 @@ func TestNamespaceCreationAndIdempotency(t *testing.T) {
 	if ns.Labels[ownerUIDLabel] != string(p.UID) || len(ns.OwnerReferences) != 0 {
 		t.Fatal("incorrect namespace association")
 	}
-	if reason := readyReason(t, c, p); reason != "NamespaceProvisioned" {
+	if reason := readyReason(t, c, p); reason != "BaselineProvisioned" {
 		t.Fatal(reason)
 	}
 	// Fail every mutation: an already correct reconcile must make no writes at all.
@@ -143,7 +147,7 @@ func TestNamespaceConflictAndRecovery(t *testing.T) {
 	if err := reconcile(t, r, p); err != nil {
 		t.Fatal(err)
 	}
-	if reason := readyReason(t, c, p); reason != "NamespaceProvisioned" {
+	if reason := readyReason(t, c, p); reason != "BaselineProvisioned" {
 		t.Fatal(reason)
 	}
 }
@@ -167,7 +171,7 @@ func TestTransientFailure(t *testing.T) {
 	if err := reconcile(t, r, p); err != nil {
 		t.Fatal(err)
 	}
-	if reason := readyReason(t, c, p); reason != "NamespaceProvisioned" {
+	if reason := readyReason(t, c, p); reason != "BaselineProvisioned" {
 		t.Fatal(reason)
 	}
 }

@@ -41,7 +41,7 @@ type PreviewEnvironmentStatus struct {
 	// Namespace is the computed target namespace.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
-	// Ready currently means namespace provisioned, not application health.
+	// Ready currently means namespace and baseline provisioned, not application health.
 	// +optional
 	Phase string `json:"phase,omitempty"`
 	// +listType=map
