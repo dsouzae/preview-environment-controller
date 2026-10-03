@@ -120,7 +120,7 @@ Before adding an application, use a dedicated cluster test to confirm:
 - Pods using preview-workload have no automounted API token and receive no application RBAC grants.
 - Real namespace deletion removes all children without manually clearing namespace finalizers.
 
-The generated Kind e2e suite remains a scaffold; these cluster checks have not been run.
+The complete command sequence is in [docs/smoke-test.md](docs/smoke-test.md). The user reported that all seven manual edlab smoke-test steps passed on 2026-10-03, including networking, resource defaults, token/RBAC checks, quota enforcement, drift repair, and cleanup. See `docs/learning.md` for the evidence and concurrency observations. The generated Kind e2e suite remains a scaffold; these manual results are not automated cluster coverage.
 
 ## Packaging and delivery
 
@@ -132,9 +132,8 @@ Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/`, and `config/` layout.
 
 ## Next milestones
 
-1. Verify namespace cleanup, quota enforcement, and network allow/deny behavior in a dedicated edlab test environment.
-2. Argo CD Application reconciliation, AppProject restrictions, health/sync watches.
-3. TTL, additional failure cases, useful metrics and OTel traces.
-4. Coverage gates, offline CI tooling, container publication, and GitOps deployment.
+1. Argo CD Application reconciliation, AppProject restrictions, health/sync watches.
+2. TTL, additional failure cases, useful metrics and OTel traces.
+3. Automated cluster smoke tests, coverage gates, offline CI tooling, container publication, and GitOps deployment.
 
 Multi-cluster placement, DNS, ingress, and automatic pull-request discovery are deferred. This project has not been exercised at meaningful scale. See `docs/learning.md` for design observations.

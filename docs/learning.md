@@ -12,12 +12,12 @@
 - Expected: a dependent resource could use the preview as its Kubernetes owner.
 - Kubernetes constraint: a namespaced PreviewEnvironment cannot own a cluster-scoped Namespace. Such an owner reference does not give valid garbage collection semantics.
 - Design: store the preview UID as association metadata; never adopt a namespace with a different or absent UID. Map namespace events through an index of computed target names, including conflicting namespaces without annotations.
-- Consequence: deletion currently retains the namespace. A later finalizer will provide real cleanup, tested against partial failure. The current API makes explicit namespace names immutable to avoid orphaning a previous target.
+- At the initial namespace milestone, deletion retained the namespace. The later finalizer milestone added real cleanup and partial-failure tests. Explicit namespace names remain immutable to avoid orphaning a previous target.
 
 ## Status and cache behavior
 
 - A successful write can precede visibility in the manager cache. A cached NotFound followed by AlreadyExists is retryable, not evidence that the namespace should be adopted.
-- Ready currently means namespace provisioned. It does not mean an application is deployed.
+- Ready initially meant namespace provisioned; it now also requires the baseline resources. It does not mean an application is deployed.
 - Condition transition times are preserved when readiness does not change. Equal status is not patched; the primary watch filters status-only updates. Namespace watches are not generation filtered.
 - envtest runs the API server and etcd, not the namespace controller. Tests must explicitly finalize namespace deletion to exercise recreation; actual cleanup and garbage collection need a real-cluster test later.
 
@@ -51,3 +51,16 @@
 - The first cluster deployment rejected the metrics Service because the long project prefix plus Kubebuilder's controller-manager-metrics-service name exceeded 63 characters. Kustomize rendered it successfully; rendering does not validate Kubernetes resource-name constraints.
 - Shortened the base Service name to manager-metrics and updated certificate replacement references and the e2e lookup. The rendered name is preview-environment-controller-manager-metrics.
 - Next time: inspect rendered names and run a server-side dry-run before deployment, especially when choosing a long project prefix. Reapplying the corrected manifests recovers from a partially successful deployment.
+
+## First edlab cluster smoke test — 2026-10-03
+
+Evidence: user-run deployment and smoke test with controller image tag `790e0e6`, preview `smoke` in `preview-environment-controller-system`, and target namespace `preview-smoke`.
+
+- Expected: changing the quota would be repaired without error logs. Observed: the pod quota returned from `100` to `10`, but controller-runtime logged object-modified conflicts for both ResourceQuota and PreviewEnvironment during reconciliation.
+- Why: optimistic patches include resourceVersion, so Kubernetes rejects a write when the object changed after the read. Manager cache lag and concurrent writes can cause this. Quota accounting is a possible concurrent writer; the logs alone do not identify which write caused these particular conflicts.
+- Recovery: the controller returned the conflicts for normal work-queue retries; no code change or manual overwrite was needed. The subsequent Ready Condition was True with reason BaselineProvisioned and observedGeneration 1. This confirms eventual drift repair despite transient concurrency errors.
+- The apparent hang at `kubectl get networkpolicy --watch` was an open-ended observation command, not a completion check. Use bounded waits or one-shot reads when testing recovery.
+- Deletion: the user reported that everything cleaned up after deleting the preview and running the namespace/preview deletion waits. No manual finalizer removal was reported. This provides a real-cluster cleanup observation beyond envtest's simulated namespace finalization.
+- Next time: capture before/after resource versions, Conditions, and logs together. A short burst of conflicts followed by readiness is recoverable; persistent conflicts during idle operation require investigation rather than being dismissed as normal.
+- The user subsequently confirmed that all seven smoke-test steps passed: image publication and deployment, preview creation, same-namespace connectivity and DNS, blocked cross-namespace ingress/egress, container resource defaults, absent workload API token and denied Secret-list access, quota admission rejection, quota drift repair, NetworkPolicy recreation, and finalizer cleanup.
+- Evidence limits: these are user-reported manual cluster-test results, with the Ready Condition and conflict logs captured in the conversation. They are not an automated cluster test suite. This was one preview environment, not a scale test. Argo CD Application reconciliation is the next implementation milestone.
