@@ -77,9 +77,9 @@ After dependency changes: `make tidy vendor`. After API or RBAC marker changes: 
 | `config/overlays/argocd-observability` | Both |
 | `config/argocd` | Restricted AppProject and namespace-scoped Application RBAC; apply separately with any Argo-enabled overlay |
 
-The Dockerfile builds offline from `vendor/` and runs as UID 1000 under tini; manager manifests use a read-only root filesystem, dropped capabilities, no privilege escalation and leader election. The Forgejo workflow checks build, unit tests, vet and formatting. Image publication, coverage gates, lint/envtest runner provisioning and GitOps tag updates remain delivery work; no remote or registry credentials are configured. Procedures are in [docs/operations.md](docs/operations.md), [docs/smoke-test.md](docs/smoke-test.md), [docs/argocd.md](docs/argocd.md) and [docs/telemetry.md](docs/telemetry.md).
+The Dockerfile builds offline from `vendor/` and runs as UID 1000 under tini; manager manifests use a read-only root filesystem, dropped capabilities, no privilege escalation and leader election. The GitHub Actions workflow checks build, unit tests, vet and formatting. Image publication, coverage gates, lint/envtest runner provisioning and GitOps tag updates remain delivery work; no remote or registry credentials are configured. Procedures are in [docs/operations.md](docs/operations.md), [docs/smoke-test.md](docs/smoke-test.md), [docs/argocd.md](docs/argocd.md) and [docs/telemetry.md](docs/telemetry.md).
 
-Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/` and `config/` layout; `PROJECT` records generator provenance. Controller GitOps bootstrap and automated image updates will follow the [internal playbook](https://forgejo.lab.edlab.dev/edlab/internal-k8s-project-playbook/src/branch/main/docs/NEW_PROJECT_PLAYBOOK.md).
+Keep Kubebuilder's `api/`, `cmd/`, `internal/controller/` and `config/` layout; `PROJECT` records generator provenance. Controller GitOps bootstrap and automated image updates remain delivery work.
 
 ## Status and next milestones
 

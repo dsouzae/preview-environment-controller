@@ -1,4 +1,4 @@
-# Forgejo Actions: the fast, cluster-free checks every push and pull request to
+# GitHub Actions: the fast, cluster-free checks every push and pull request to
 # main must pass. It mirrors what a contributor runs locally (make build test vet
 # plus gofmt). Go's download cache is disabled because builds use the committed
 # vendor tree, so there is nothing to cache.
@@ -10,7 +10,7 @@ on:
     branches: [main]
 jobs:
   validate:
-    runs-on: docker
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

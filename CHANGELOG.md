@@ -10,6 +10,7 @@ One entry per milestone, newest first, each identified by its commit. There is n
 - Split the README into a front page plus `docs/design.md`, `docs/conditions.md`, `docs/operations.md` and `docs/testing.md`; added this changelog and a project-specific section at the top of `AGENTS.md`.
 - CRD field descriptions: `status.phase` now documents its three values and is schema-restricted to `Pending`, `Ready`, `Deleting`; `observedGeneration`, `syncStatus`, `applicationHealth` and `conditions` gained descriptions. No behaviour change.
 - Samples are commented and a derived-name TTL sample was added.
+- Public GitHub release: the CI workflow moved to `.github/workflows/ci.yaml` (GitHub Actions, `ubuntu-latest`), and the Argo CD AppProject allowlist and application sample point at `https://github.com/dsouzae/preview-environment-controller.git` instead of an internal Git server. Argo CD must be able to reach GitHub, or substitute an internal mirror in both places.
 
 ### OpenTelemetry tracing — `3ce4bff`
 
@@ -79,4 +80,4 @@ Upgrade
 
 - Kubebuilder 4.16.0 scaffold, Go 1.27.1, controller-runtime 0.25.0, Kubernetes 0.37.0, vendored dependencies.
 - `PreviewEnvironment` CRD with optional, immutable `spec.namespace`; namespace creation with a UID association label; no adoption of unrelated namespaces. Ready reasons `InvalidConfiguration`, `NamespaceProvisioningFailed`, `NamespaceConflict`, `NamespaceTerminating`, `NamespaceProvisioned`.
-- Forgejo workflow running build, unit tests, vet and gofmt.
+- CI workflow running build, unit tests, vet and gofmt.

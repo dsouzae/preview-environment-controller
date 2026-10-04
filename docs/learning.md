@@ -24,7 +24,7 @@
 ## Go toolchain update
 
 - The workstation was upgraded to Go 1.27.1. Confirmed with `GOTOOLCHAIN=local go version`.
-- Aligned go.mod, Forgejo setup-go, Dockerfile, and devcontainer pins. Kubernetes dependencies remain at the initial scaffold versions.
+- Aligned go.mod, the CI setup-go step, Dockerfile, and devcontainer pins. Kubernetes dependencies remain at the initial scaffold versions.
 
 ## Finalizer cleanup
 

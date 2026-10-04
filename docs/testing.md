@@ -9,7 +9,7 @@ Four layers, each proving something the previous one cannot.
 | Cluster smoke tests | manual, see below | A disposable cluster with an enforcing CNI | CNI enforcement, quota admission accounting, real namespace garbage collection, Argo CD sync and cascading deletion, collector ingestion. |
 | Kind e2e | `make test-e2e` | Kind | Scaffold placeholder only; not yet meaningful. |
 
-CI (`.forgejo/workflows/ci.yaml`) runs `make build test vet` and a `gofmt -l api cmd internal` check. Lint and envtest are not in CI yet because the runner has no pinned tooling provisioned; run them locally.
+CI (`.github/workflows/ci.yaml`, GitHub Actions) runs `make build test vet` and a `gofmt -l api cmd internal` check. Lint and envtest are not in CI yet because the runner has no pinned tooling provisioned; run them locally.
 
 ## Unit tests
 

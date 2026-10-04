@@ -14,6 +14,6 @@ spec:
   # revision and path may change later. path defaults to "." when omitted.
   # The manifests must omit explicit namespaces and must not declare the
   # controller-owned baseline resources.
-  repository: http://forgejo-http.forgejo.svc.cluster.local:3000/edlab/preview-environment-controller.git
+  repository: https://github.com/dsouzae/preview-environment-controller.git
   revision: main
   path: config/demo

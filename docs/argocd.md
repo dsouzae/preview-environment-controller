@@ -18,7 +18,7 @@ Deletion uses uncached reads and UID/resourceVersion delete preconditions. It fi
 
 ## Install on edlab
 
-First push the implementation commit and wait for Forgejo validation. Argo must be installed and able to read the repository; credentials, if required, belong in Argo's repository configuration, not the PreviewEnvironment. Check the installed version/CRDs against the fields used here. Tests pin the upstream v3.3.0 Application CRD; this is not a claim about the cluster's version.
+First push the implementation commit and wait for CI validation. Argo must be installed and able to read the repository; credentials, if required, belong in Argo's repository configuration, not the PreviewEnvironment. Check the installed version/CRDs against the fields used here. Tests pin the upstream v3.3.0 Application CRD; this is not a claim about the cluster's version.
 
 ```sh
 kubectl config current-context
@@ -34,7 +34,7 @@ Build and publish a new controller image using the Podman commands in step 1 of 
 bin/kustomize build config/overlays/argocd > /tmp/preview-argocd-controller.yaml
 ```
 
-Review `config/argocd/project.yaml` before applying. It permits only this repo's internal Forgejo URL, the local cluster, `preview-*` destinations and Deployments, Services and ConfigMaps. It denies cluster resources and does not permit baseline policy, quota, ServiceAccount or RBAC manifests. Adjust the exact repository allowlist if using another trusted demo repository. Avoid the permissive default project.
+Review `config/argocd/project.yaml` before applying. It permits only this repository's GitHub URL, the local cluster, `preview-*` destinations and Deployments, Services and ConfigMaps. It denies cluster resources and does not permit baseline policy, quota, ServiceAccount or RBAC manifests. Adjust the exact repository allowlist if using another trusted demo repository. Avoid the permissive default project.
 
 The separate Role/RoleBinding permits Application operations only in `argocd`; the manager's Application cache is scoped to the same namespace. It grants no AppProject editing permission. If changing deployment or Argo namespaces, adjust the RoleBinding subject, Role namespace, overlay flags and project together. Kubernetes RBAC does not constrain Application creation by project or association label: treat controller credentials and PreviewEnvironment creation as trusted administrative access. A shared AppProject allowing `preview-*` is not a hostile tenant boundary; it is intended for trusted manifests without explicit namespace overrides.
 

@@ -12,8 +12,10 @@ spec:
   description: Single-cluster preview workloads with controller-owned baselines
   # Only these repositories may appear in spec.repository. Add trusted demo
   # repositories here; credentials, if needed, belong in Argo CD's repo config.
+  # Argo CD must be able to reach this URL; substitute an internal mirror if the
+  # cluster has no outbound access.
   sourceRepos:
-  - http://forgejo-http.forgejo.svc.cluster.local:3000/edlab/preview-environment-controller.git
+  - https://github.com/dsouzae/preview-environment-controller.git
   # Local cluster only (remote placement is not implemented), and only the
   # controller's reserved namespace prefix. Namespace auto-creation stays off.
   destinations:
