@@ -49,7 +49,7 @@ Kind's default CNI (kindnet) does not enforce NetworkPolicy; use a cluster with 
 | `config/argocd` | The restricted AppProject and the namespace-scoped Application Role/RoleBinding. Apply separately with `kubectl apply -k config/argocd` whenever an Argo-enabled overlay is used. |
 | `config/observability/servicemonitor.yaml` | Optional, Prometheus Operator only; apply separately after adding your `serviceMonitorSelector` labels. |
 
-Procedure: build and publish the image (step 1 of [smoke-test.md](smoke-test.md); `a.sh` is the saved Podman helper), pin it into the chosen overlay with `kustomize edit set image`, render, `kubectl apply --dry-run=server`, then apply. Installation details for Argo CD are in [argocd.md](argocd.md) and for observability in [telemetry.md](telemetry.md). `make deploy` edits `config/manager/kustomization.yaml`; inspect that image-pin change before committing it.
+Procedure: build and publish the image (step 1 of [smoke-test.md](smoke-test.md)), pin it into the chosen overlay with `kustomize edit set image`, render, `kubectl apply --dry-run=server`, then apply. Installation details for Argo CD are in [argocd.md](argocd.md) and for observability in [telemetry.md](telemetry.md). `make deploy` edits `config/manager/kustomization.yaml`; inspect that image-pin change before committing it.
 
 Controller flags and environment:
 

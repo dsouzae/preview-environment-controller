@@ -1,12 +1,24 @@
+# Optional edlab deployment. Replaces the default authenticated HTTPS metrics
+# (:8443) with cluster-internal plaintext HTTP (:9090) to match edlab's Prometheus
+# scrape conventions, and enables OTLP tracing through manager.yaml. Plaintext
+# metrics are acceptable only on a trusted cluster network; keep config/default
+# where authentication is the required boundary. Baseline-only: compose with
+# config/overlays/argocd-observability when Argo CD is enabled. Pin the image with
+#   (cd config/observability && ../../bin/kustomize edit set image controller="$PREVIEW_IMAGE")
+# See docs/telemetry.md.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Optional edlab deployment: replaces HTTPS metrics with cluster-internal HTTP.
 resources:
 - ../default
 patches:
+# Strategic-merge patch: manager args, port and OTEL environment.
 - path: manager.yaml
   target:
     kind: Deployment
+# Re-point the default metrics Service at 9090 and annotate it for
+# annotation-based scraping. Pod annotations in manager.yaml say the same;
+# configure Prometheus to honour one of pods, Services or the optional
+# servicemonitor.yaml so the controller is not scraped twice.
 - target:
     kind: Service
     name: preview-environment-controller-manager-metrics

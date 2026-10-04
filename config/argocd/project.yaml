@@ -1,3 +1,8 @@
+# AppProject for controller-managed preview Applications. Applied separately with
+# `kubectl apply -k config/argocd`: the controller has no AppProject permissions and
+# must not edit it. --argo-project must name this project; the controller refuses
+# "default". Review before applying: it is an allowlist of one trusted repository,
+# the local cluster and preview-* namespaces. Details in docs/argocd.md.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -5,14 +10,19 @@ metadata:
   namespace: argocd
 spec:
   description: Single-cluster preview workloads with controller-owned baselines
+  # Only these repositories may appear in spec.repository. Add trusted demo
+  # repositories here; credentials, if needed, belong in Argo CD's repo config.
   sourceRepos:
   - http://forgejo-http.forgejo.svc.cluster.local:3000/edlab/preview-environment-controller.git
+  # Local cluster only (remote placement is not implemented), and only the
+  # controller's reserved namespace prefix. Namespace auto-creation stays off.
   destinations:
   - server: https://kubernetes.default.svc
     namespace: preview-*
   # No cluster-scoped resources, including Namespace or CRDs.
   clusterResourceWhitelist: []
-  # Keep quota, networking and identity under the preview controller's ownership.
+  # Keep quota, networking and identity under the preview controller's ownership:
+  # ResourceQuota, LimitRange, NetworkPolicy, ServiceAccount and RBAC are excluded.
   namespaceResourceWhitelist:
   - group: apps
     kind: Deployment

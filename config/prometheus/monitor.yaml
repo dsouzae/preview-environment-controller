@@ -1,4 +1,7 @@
-# Prometheus Monitor Service (Metrics)
+# Scaffold ServiceMonitor for the default HTTPS, bearer-token metrics endpoint.
+# Rendered only when config/default/kustomization.yaml uncomments ../prometheus.
+# Do not combine with config/observability/servicemonitor.yaml, which scrapes the
+# plaintext :9090 endpoint of the observability overlay (docs/telemetry.md).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

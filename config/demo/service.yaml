@@ -1,3 +1,7 @@
+# ClusterIP Service for the demo. The ResourceQuota allows zero NodePort and
+# LoadBalancer Services, and the baseline NetworkPolicy admits traffic only from
+# pods in the same preview namespace, so the smoke test reaches it from an
+# in-namespace probe pod (wget http://preview-demo).
 apiVersion: v1
 kind: Service
 metadata:

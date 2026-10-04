@@ -1,7 +1,15 @@
+# Default deployment plus Argo CD Application reconciliation. Also apply
+# config/argocd (AppProject and Application RBAC); the flag values below must
+# match its project name and namespace. Pin the published image before rendering:
+#   (cd config/overlays/argocd && ../../../bin/kustomize edit set image controller="$PREVIEW_IMAGE")
+#   bin/kustomize build config/overlays/argocd
+# Installation and smoke test: docs/argocd.md.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
 - ../../default
+# JSON patch appending to the manager args; the base already sets leader
+# election, the probe address and HTTPS metrics.
 patches:
 - target:
     kind: Deployment

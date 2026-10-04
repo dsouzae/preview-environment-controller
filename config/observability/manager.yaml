@@ -1,3 +1,6 @@
+# Strategic-merge patch for the manager Deployment, applied by kustomization.yaml
+# in this directory. Pod annotations mirror the Service annotations for Prometheus
+# installations that discover pods rather than Services.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +16,10 @@ spec:
     spec:
       containers:
       - name: manager
+        # A strategic merge replaces the args list wholesale, so the base flags
+        # are repeated here and the default --metrics-bind-address=:8443 patch is
+        # dropped in favour of plaintext 9090. The Argo overlay appends its flags
+        # after this patch.
         args:
         - --leader-elect
         - --health-probe-bind-address=:8081
@@ -22,10 +29,15 @@ spec:
         - containerPort: 9090
           name: http-metrics
         env:
+        # Project opt-in for tracing; the standard OTEL_SDK_DISABLED=true still wins.
         - name: OTEL_ENABLED
           value: "true"
+        # edlab's shared collector over OTLP/HTTP; the exporter appends /v1/traces.
+        # Set OTEL_EXPORTER_OTLP_HEADERS from a Secret if the collector needs auth.
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://otel-collector-collector.opentelemetry-operator.svc.cluster.local:4318
+        # Sample 10% of root traces. Override with always_on for a short
+        # verification window, then restore (docs/telemetry.md).
         - name: OTEL_TRACES_SAMPLER
           value: parentbased_traceidratio
         - name: OTEL_TRACES_SAMPLER_ARG

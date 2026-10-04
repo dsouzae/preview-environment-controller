@@ -1,3 +1,7 @@
+# golangci-lint v2 configuration, used by make lint and make lint-fix; make
+# lint-config verifies this file. Start from no linters and enable a small,
+# high-signal set instead of the v2 "standard" preset, so the vendored tree and
+# generated DeepCopy code do not drown real findings. Add linters deliberately.
 version: "2"
 linters:
   default: none

@@ -1,6 +1,11 @@
-# Application compilation and tests use the committed vendor tree.
+# Application compilation and tests use the committed vendor tree; only the
+# tidy and vendor targets reach the module proxy.
 export GOFLAGS := -mod=vendor
+# Default build cache location; override with GOCACHE=… when needed.
 export GOCACHE ?= /tmp/preview-controller-go-cache
+# VERSION holds a single bare line (no comments: it is read verbatim). With the
+# short commit hash it is linked into internal/buildinfo and reported as
+# service.version in traces; the Dockerfile takes the same values as build args.
 VERSION := $(shell cat VERSION)
 GIT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -X edlab.dev/preview-environment-controller/internal/buildinfo.Version=$(VERSION) -X edlab.dev/preview-environment-controller/internal/buildinfo.GitHash=$(GIT_HASH)
@@ -75,10 +80,11 @@ test-integration: ## Run envtest (requires pre-provisioned KUBEBUILDER_ASSETS).
 	@test -n "$$KUBEBUILDER_ASSETS" || { echo "Run make setup-envtest and set KUBEBUILDER_ASSETS"; exit 1; }
 	go test -tags=integration -count=1 ./internal/controller/... -v
 
+# Dependency changes: run both, then commit go.mod, go.sum and vendor/ together.
 .PHONY: tidy vendor
-tidy:
+tidy: ## Tidy go.mod/go.sum against the module proxy (follow with make vendor).
 	GOFLAGS=-mod=mod go mod tidy
-vendor:
+vendor: ## Refresh vendor/ from go.mod; commit the result.
 	GOFLAGS=-mod=mod go mod vendor
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
@@ -131,7 +137,7 @@ build: ## Build manager binary.
 	go build -ldflags "$(LDFLAGS)" -o bin/manager cmd/main.go
 
 .PHONY: run
-run: ## Run a controller from your host.
+run: ## Run a controller from your host (baseline-only; see docs/operations.md for Argo flags).
 	go run ./cmd/main.go
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.

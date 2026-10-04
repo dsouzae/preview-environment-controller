@@ -46,7 +46,7 @@ Operational note: do not disable the integration or change its Argo namespace wh
 
 ### Cluster smoke test documented — `d5d8355`
 
-- `docs/smoke-test.md` records the seven-step manual procedure; all steps passed on edlab on 2026-10-03 with image `790e0e6`. `a.sh` keeps the Podman publish helper.
+- `docs/smoke-test.md` records the seven-step manual procedure; all steps passed on edlab on 2026-10-03 with image `790e0e6`.
 
 ### Metrics Service rename — `a1f28f1`
 

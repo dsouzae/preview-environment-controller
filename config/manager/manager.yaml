@@ -60,11 +60,19 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
+      # Base flags only. Overlays add the rest by patch: config/default prepends
+      # --metrics-bind-address=:8443 (HTTPS); config/observability replaces the
+      # list with plaintext :9090 and OTEL env; config/overlays/argocd appends
+      # --argo-namespace and --argo-project. Flags are documented in
+      # docs/operations.md.
       - args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+        # Placeholder. `make deploy IMG=…` or `kustomize edit set image controller=…`
+        # in the overlay being rendered substitutes the published image.
         image: controller:latest
         name: manager
+        # Liveness/readiness only; the metrics port is added by overlays.
         ports:
         - containerPort: 8081
           name: health
@@ -87,7 +95,9 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
-        # TODO(user): Configure the resources accordingly based on the project requirements.
+        # Sized for one small controller watching a handful of previews; the
+        # manager has not been profiled under load. Revisit after observing
+        # usage on edlab (controller-runtime metrics, docs/telemetry.md).
         # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
         resources:
           limits:

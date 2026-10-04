@@ -1,3 +1,11 @@
+# Metrics Service for the default deployment: authenticated HTTPS on 8443, served
+# by controller-runtime with token review (see config/rbac/metrics_auth_role.yaml).
+#
+# The name is deliberately short. The scaffold's controller-manager-metrics-service
+# plus the namePrefix exceeded Kubernetes' 63-character limit and the first cluster
+# deployment rejected it (docs/learning.md). The rendered name is
+# preview-environment-controller-manager-metrics; config/observability patches this
+# same Service to plaintext 9090 for edlab's Prometheus conventions.
 apiVersion: v1
 kind: Service
 metadata:

@@ -1,3 +1,13 @@
+# Lets the controller manage Applications in the Argo CD namespace only. A Role
+# rather than a ClusterRole, matching the manager's Application informer, which
+# cmd/main.go scopes to the same namespace. delete is needed for ordered cleanup
+# (Application before namespace). No AppProject permissions are granted.
+#
+# Kubernetes RBAC cannot restrict Applications by project or label, so this treats
+# the controller as a trusted administrative identity (docs/design.md, Security
+# boundaries). If the controller's deployment namespace or name prefix changes, or
+# Argo CD runs in another namespace, update the subject below, both
+# metadata.namespace fields and --argo-namespace in the overlays together.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -18,6 +28,8 @@ roleRef:
   kind: Role
   name: preview-application-manager
 subjects:
+# The manager ServiceAccount as rendered by config/default: namePrefix plus
+# controller-manager, in the controller's namespace.
 - kind: ServiceAccount
   name: preview-environment-controller-controller-manager
   namespace: preview-environment-controller-system

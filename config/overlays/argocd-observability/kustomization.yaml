@@ -1,7 +1,15 @@
+# config/observability (plaintext metrics on 9090 and OTLP tracing) plus Argo CD
+# Application reconciliation: the overlay to use on edlab when both are wanted.
+# Also apply config/argocd. Pin the published image before rendering:
+#   (cd config/overlays/argocd-observability && ../../../bin/kustomize edit set image controller="$PREVIEW_IMAGE")
+#   bin/kustomize build config/overlays/argocd-observability
+# See docs/telemetry.md and docs/argocd.md.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
 - ../../observability
+# Same Argo flags as config/overlays/argocd, appended after the observability
+# patch has replaced the manager args.
 patches:
 - target:
     kind: Deployment
